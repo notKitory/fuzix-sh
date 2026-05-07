@@ -516,6 +516,8 @@ cd "$z80"
 set env(PATH) "$z80/srctools:\$env(PATH)"
 set key_interrupt "\034"
 set key_shutdown "\035"
+set key_backspace "\010"
+set key_delete "\177"
 proc restore_tty {} {
     catch {stty sane}
 }
@@ -538,6 +540,12 @@ expect {
     timeout { puts "timeout waiting for bootdev"; exit 2 }
 }
 interact \
+    \$key_delete {
+        send "\010"
+    } \
+    \$key_backspace {
+        send "\010"
+    } \
     -o -re {Halted\.|System halted|halt:} {
         finish_emulator 0
     } \
@@ -564,11 +572,11 @@ case "$cmd" in
         shift
         verbose=0
         if [ "${1:-}" = "-v" ]; then
+            host_notice
             verbose=1
             shift
         fi
         [ $# -ge 1 ] || { usage; exit 1; }
-        host_notice
         command=$1
         shift
         if [ "${1:-}" = "--" ]; then
@@ -589,7 +597,6 @@ case "$cmd" in
             shift
         fi
         [ $# -ge 1 ] || { usage; exit 1; }
-        host_notice
         src=$1
         shift
         if [ "${1:-}" = "--" ]; then
