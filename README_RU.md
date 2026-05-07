@@ -17,6 +17,7 @@
 ```bash
 ./fuzix.sh compile <source.c>
 ./fuzix.sh cp <host-path> <fuzix-path>
+./fuzix.sh make [target...]
 ./fuzix.sh run [-v] <command> [arg...]
 ./fuzix.sh shell
 ./fuzix.sh test [-v] <source.c> [arg...]
@@ -30,6 +31,7 @@
 | --- | --- |
 | `compile <source.c>` | Компилирует C-файл в `.fuzix-sh/bin/<source-name>`. |
 | `cp <host-path> <fuzix-path>` | Копирует локальный файл в FUZIX root-диск по пути `<fuzix-path>`. |
+| `make [target...]` | Запускает `make` в окружении FUZIX toolchain. |
 | `run [-v] <command> [arg...]` | Загружает FUZIX в z80pack, выполняет команду в FUZIX shell, печатает вывод команды и выключает эмулятор. |
 | `shell` | Открывает интерактивный FUZIX shell. |
 | `test [-v] <source.c> [arg...]` | Последовательно выполняет `compile`, `cp` и `run`. |

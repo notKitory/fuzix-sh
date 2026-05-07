@@ -52,6 +52,7 @@ usage() {
 Usage:
   ./fuzix.sh compile <source.c>
   ./fuzix.sh cp <host-path> <fuzix-path>
+  ./fuzix.sh make [target...]
   ./fuzix.sh run [-v] <command> [arg...]
   ./fuzix.sh shell
   ./fuzix.sh test [-v] <source.c> [arg...]
@@ -165,6 +166,7 @@ FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     expect \
+    make \
     perl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -307,6 +309,36 @@ inside_compile() {
     }
 
     echo "Compiled: $out"
+}
+
+inside_make() {
+    prebuilt=$(inside_prebuilt_dir)
+
+    command -v make >/dev/null 2>&1 || {
+        echo "make is not installed in the Docker runtime image." >&2
+        echo "Set FUZIX_REBUILD_DOCKER=1 and run this command again." >&2
+        exit 1
+    }
+
+    if command -v cc85 >/dev/null 2>&1; then
+        compiler=$(command -v cc85)
+    elif command -v fcc >/dev/null 2>&1; then
+        compiler=$(command -v fcc)
+    else
+        echo "No FUZIX compiler driver found in /opt/fcc/bin." >&2
+        exit 1
+    fi
+
+    export FUZIX_ROOT="$prebuilt/fuzix"
+    export FUZIX_CPU
+    export FUZIX_CC="$compiler"
+    export FUZIX_CFLAGS="-m$FUZIX_CPU -Os -D__STDC__ -I$prebuilt/fuzix/include -I$prebuilt/fuzix/include/$FUZIX_CPU"
+    export FUZIX_LDFLAGS="-m$FUZIX_CPU -L$prebuilt/fuzix/libs"
+    export FUZIX_CRT0="$prebuilt/fuzix/libs/crt0_${FUZIX_CPU}.o"
+    export FUZIX_LIBS="-lc$FUZIX_CPU -lc$FUZIX_CPU -lc$FUZIX_CPU"
+    export FUZIX_BINMAN85="$prebuilt/fuzix/tools/binman85"
+
+    make "$@"
 }
 
 inside_cp() {
@@ -568,6 +600,10 @@ case "$cmd" in
         [ $# -eq 3 ] || { usage; exit 1; }
         docker_run cp "$2" "$3"
         ;;
+    make)
+        shift
+        docker_run make "$@"
+        ;;
     run)
         shift
         verbose=0
@@ -625,6 +661,10 @@ case "$cmd" in
             cp)
                 shift
                 inside_cp "$@"
+                ;;
+            make)
+                shift
+                inside_make "$@"
                 ;;
             run)
                 shift

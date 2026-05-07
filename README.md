@@ -17,6 +17,7 @@ To use downloading only [`fuzix.sh`](https://raw.githubusercontent.com/notKitory
 ```bash
 ./fuzix.sh compile <source.c>
 ./fuzix.sh cp <host-path> <fuzix-path>
+./fuzix.sh make [target...]
 ./fuzix.sh run [-v] <command> [arg...]
 ./fuzix.sh shell
 ./fuzix.sh test [-v] <source.c> [arg...]
@@ -30,6 +31,7 @@ On the first run, the script downloads binaries into `.fuzix-sh/prebuilt/<arch>`
 | --- | --- |
 | `compile <source.c>` | Compiles a C source file into `.fuzix-sh/bin/<source-name>`. |
 | `cp <host-path> <fuzix-path>` | Copies a local file into the FUZIX root disk at `<fuzix-path>`. |
+| `make [target...]` | Runs `make` in the FUZIX toolchain environment. |
 | `run [-v] <command> [arg...]` | Boots FUZIX in z80pack, runs the command in the FUZIX shell, prints the command output, and shuts the emulator down. |
 | `shell` | Opens an interactive FUZIX shell. |
 | `test [-v] <source.c> [arg...]` | Runs `compile`, `cp`, and `run` in sequence. |
