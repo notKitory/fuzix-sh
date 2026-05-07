@@ -413,7 +413,6 @@ set env(PATH) "$z80/srctools:\$env(PATH)"
 proc finish_emulator {status} {
     global emulator_spawn_id
     catch {send -i \$emulator_spawn_id "\034"}
-    after 500
     catch {close -i \$emulator_spawn_id}
     catch {wait -i \$emulator_spawn_id}
     exit \$status
@@ -440,6 +439,7 @@ expect {
 }
 expect {
     -i \$user_spawn_id "\035" { finish_emulator 130 }
+    -i \$emulator_spawn_id -re {Continue\?} { send -i \$emulator_spawn_id "no\r"; exp_continue }
     -i \$emulator_spawn_id -re {login:} { send -i \$emulator_spawn_id "root\r" }
     timeout { puts "timeout waiting for login"; finish_emulator 2 }
 }
@@ -522,7 +522,6 @@ proc restore_tty {} {
 proc finish_emulator {status} {
     restore_tty
     catch {send "\034"}
-    after 500
     catch {close}
     catch {wait}
     exit \$status
@@ -538,27 +537,14 @@ expect {
     -re {bootdev:} { send "0\r" }
     timeout { puts "timeout waiting for bootdev"; exit 2 }
 }
-expect {
-    -re {login:} { send "root\r" }
-    timeout { puts "timeout waiting for login"; exit 2 }
-}
-expect {
-    -re {[\$#] } {
-        log_user 0
-        send "stty erase '^?'\r"
-        expect -re {[\$#] }
-        log_user 1
-        interact \
-            -o -re {Halted\.|System halted|halt:} {
-                finish_emulator 0
-            } \
-            \$key_shutdown {
-                finish_emulator 0
-            }
-        restore_tty
+interact \
+    -o -re {Halted\.|System halted|halt:} {
+        finish_emulator 0
+    } \
+    \$key_shutdown {
+        finish_emulator 0
     }
-    timeout { puts "timeout waiting for shell"; exit 2 }
-}
+restore_tty
 EOF
 
     expect "$expect_file"
