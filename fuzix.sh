@@ -50,11 +50,11 @@ export PATH
 usage() {
     cat <<EOF
 Usage:
-  ./fuzix.sh compile <source.c> [program-name]
-  ./fuzix.sh image <program-name>
-  ./fuzix.sh run [-v] <program-name> [-- arg...]
+  ./fuzix.sh compile <source.c>
+  ./fuzix.sh image
+  ./fuzix.sh run [-v] [arg...]
   ./fuzix.sh shell
-  ./fuzix.sh test [-v] <source.c> [program-name] [-- arg...]
+  ./fuzix.sh test [-v] <source.c> [arg...]
 
 Environment:
   FUZIX_SH_DIR    state dir, default: ./.fuzix-sh
@@ -220,6 +220,20 @@ program_name_from_source() {
     printf '%s\n' "${base%.*}"
 }
 
+current_program_name() {
+    file="$STATE_DIR/current-program"
+    [ -s "$file" ] || {
+        echo "No current program. Run: ./fuzix.sh compile <source.c>" >&2
+        exit 1
+    }
+    IFS= read -r name <"$file" || name=
+    [ -n "$name" ] || {
+        echo "Current program file is empty: $file" >&2
+        exit 1
+    }
+    printf '%s\n' "$name"
+}
+
 validate_fuzix_token() {
     case "$1" in
         ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:+=,@%-]*)
@@ -252,7 +266,7 @@ inside_ensure_images() {
 
 inside_compile() {
     src=$1
-    name=${2:-$(program_name_from_source "$src")}
+    name=$(program_name_from_source "$src")
     prebuilt=$(inside_prebuilt_dir)
 
     [ -f "$src" ] || {
@@ -306,11 +320,12 @@ inside_compile() {
         exit 1
     }
 
+    printf '%s\n' "$name" >"$STATE_DIR/current-program"
     echo "Compiled: $out"
 }
 
 inside_image() {
-    name=$1
+    name=$(current_program_name)
     prebuilt=$(inside_prebuilt_dir)
     app="$STATE_DIR/bin/$name"
     out_boot="$STATE_DIR/images/boot.dsk"
@@ -535,12 +550,12 @@ EOF
 cmd=${1:-}
 case "$cmd" in
     compile)
-        [ $# -ge 2 ] && [ $# -le 3 ] || { usage; exit 1; }
-        docker_run compile "$2" "${3:-}"
+        [ $# -eq 2 ] || { usage; exit 1; }
+        docker_run compile "$2"
         ;;
     image)
-        [ $# -eq 2 ] || { usage; exit 1; }
-        docker_run image "$2"
+        [ $# -eq 1 ] || { usage; exit 1; }
+        docker_run image
         ;;
     run)
         shift
@@ -549,16 +564,11 @@ case "$cmd" in
             verbose=1
             shift
         fi
-        [ $# -ge 1 ] || { usage; exit 1; }
         [ "$verbose" = 1 ] && host_notice
-        name=$1
-        shift
         if [ "${1:-}" = "--" ]; then
             shift
-        elif [ $# -gt 0 ]; then
-            usage
-            exit 1
         fi
+        name=$(current_program_name)
         docker_run run "$verbose" "$name" "$@"
         ;;
     shell)
@@ -578,24 +588,15 @@ case "$cmd" in
         src=$1
         shift
         if [ "${1:-}" = "--" ]; then
-            name=$(program_name_from_source "$src")
             shift
-        else
-            name=${1:-$(program_name_from_source "$src")}
-            [ $# -gt 0 ] && shift
-            if [ "${1:-}" = "--" ]; then
-                shift
-            elif [ $# -gt 0 ]; then
-                usage
-                exit 1
-            fi
         fi
+        name=$(program_name_from_source "$src")
         if [ "$verbose" = 1 ]; then
-            docker_run compile "$src" "$name"
-            docker_run image "$name"
+            docker_run compile "$src"
+            docker_run image
         else
-            docker_run compile "$src" "$name" >/dev/null
-            docker_run image "$name" >/dev/null
+            docker_run compile "$src" >/dev/null
+            docker_run image >/dev/null
         fi
         docker_run run "$verbose" "$name" "$@"
         ;;
