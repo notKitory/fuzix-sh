@@ -18,6 +18,7 @@
 ./fuzix.sh compile <source.c>
 ./fuzix.sh cp <host-path> <fuzix-path>
 ./fuzix.sh make [target...]
+./fuzix.sh make-test [-v] [arg...]
 ./fuzix.sh run [-v] <command> [arg...]
 ./fuzix.sh shell
 ./fuzix.sh test [-v] <source.c> [arg...]
@@ -32,6 +33,7 @@
 | `compile <source.c>` | Компилирует C-файл в `.fuzix-sh/bin/<source-name>`. |
 | `cp <host-path> <fuzix-path>` | Копирует локальный файл в FUZIX root-диск по пути `<fuzix-path>`. |
 | `make [target...]` | Запускает `make` в окружении FUZIX toolchain. |
+| `make-test [-v] [arg...]` | Запускает `make`, копирует первый target из Makefile в `/bin/<имя-target>` и запускает его в FUZIX. |
 | `run [-v] <command> [arg...]` | Загружает FUZIX в z80pack, выполняет команду в FUZIX shell, печатает вывод команды и выключает эмулятор. |
 | `shell` | Открывает интерактивный FUZIX shell. |
 | `test [-v] <source.c> [arg...]` | Последовательно выполняет `compile`, `cp` и `run`. |
@@ -45,6 +47,7 @@
 ./fuzix.sh run ls /bin
 ./fuzix.sh run /bin/hello arg1 arg2
 ./fuzix.sh test hello.c arg1 arg2
+./fuzix.sh make-test arg1 arg2
 ```
 
 ## State-директория

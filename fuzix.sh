@@ -53,6 +53,7 @@ Usage:
   ./fuzix.sh compile <source.c>
   ./fuzix.sh cp <host-path> <fuzix-path>
   ./fuzix.sh make [target...]
+  ./fuzix.sh make-test [-v] [arg...]
   ./fuzix.sh run [-v] <command> [arg...]
   ./fuzix.sh shell
   ./fuzix.sh test [-v] <source.c> [arg...]
@@ -341,6 +342,32 @@ inside_make() {
     make "$@"
 }
 
+first_makefile_target() {
+    makefile=
+    for path in GNUmakefile makefile Makefile; do
+        if [ -f "$path" ]; then
+            makefile=$path
+            break
+        fi
+    done
+
+    [ -n "$makefile" ] || {
+        echo "Makefile not found." >&2
+        exit 1
+    }
+
+    sed -n '
+        /^[[:space:]]*#/d
+        /^[[:space:]]*$/d
+        /^[^[:space:].#][^:=]*:/ {
+            s/:.*//
+            s/[[:space:]].*//
+            p
+            q
+        }
+    ' "$makefile"
+}
+
 inside_cp() {
     src=$1
     dest=$2
@@ -612,6 +639,33 @@ case "$cmd" in
     make)
         shift
         docker_run make "$@"
+        ;;
+    make-test)
+        shift
+        verbose=0
+        if [ "${1:-}" = "-v" ]; then
+            verbose=1
+            shift
+        fi
+        if [ "${1:-}" = "--" ]; then
+            shift
+        fi
+        app=${FUZIX_MAKE_BINARY:-$(first_makefile_target)}
+        [ -n "$app" ] || {
+            echo "Could not detect output binary from Makefile." >&2
+            echo "Set FUZIX_MAKE_BINARY to the binary path." >&2
+            exit 1
+        }
+        name=$(basename -- "$app")
+        fuzix_path="/bin/$name"
+        if [ "$verbose" = 1 ]; then
+            docker_run make
+            docker_run cp "$app" "$fuzix_path" 755
+        else
+            docker_run make >/dev/null
+            docker_run cp "$app" "$fuzix_path" 755 >/dev/null
+        fi
+        docker_run run "$verbose" "$fuzix_path" "$@"
         ;;
     run)
         shift
