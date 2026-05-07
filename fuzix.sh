@@ -2,41 +2,69 @@
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-STATE_DIR=${FUZIX_PLAYGROUND_DIR:-"$ROOT_DIR/.fuzix-playground"}
-TOOL_DIR="$STATE_DIR/tools"
-DOCKER_IMAGE=${FUZIX_DOCKER_IMAGE:-fuzix-playground:debian-trixie}
-FUZIX_REBUILD_DOCKER=${FUZIX_REBUILD_DOCKER:-0}
-FUZIX_REF=${FUZIX_REF:-v0.4}
-FUZIX_REPO=${FUZIX_REPO:-https://github.com/EtchedPixels/FUZIX.git}
-FUZIX_BINTOOLS_REPO=${FUZIX_BINTOOLS_REPO:-https://github.com/EtchedPixels/Fuzix-Bintools.git}
-FUZIX_FCC_REPO=${FUZIX_FCC_REPO:-https://github.com/EtchedPixels/Fuzix-Compiler-Kit.git}
-Z80PACK_REPO=${Z80PACK_REPO:-https://github.com/udo-munk/z80pack.git}
-SDCC_REPO=${SDCC_REPO:-https://github.com/EtchedPixels/sdcc280.git}
-FUZIX_IMAGE_BASE=${FUZIX_IMAGE_BASE:-https://fuzix.org/downloads/0.4/z80pack}
+STATE_DIR=${FUZIX_SH_DIR:-"$ROOT_DIR/.fuzix-sh"}
 FUZIX_CPU=${FUZIX_CPU:-8080}
-FUZIX_BUILD_FROM_SOURCE=${FUZIX_BUILD_FROM_SOURCE:-0}
 TIMEOUT=${FUZIX_TIMEOUT:-45}
-PATH=$TOOL_DIR/fcc/bin:$TOOL_DIR/sdcc/bin:/opt/fcc/bin:$PATH
+FUZIX_REBUILD_DOCKER=${FUZIX_REBUILD_DOCKER:-0}
+FUZIX_PREBUILT_REPO=${FUZIX_PREBUILT_REPO:-notKitory/fuzix-sh}
+FUZIX_PREBUILT_RELEASE=${FUZIX_PREBUILT_RELEASE:-latest}
+FUZIX_PREBUILT_ARCH=${FUZIX_PREBUILT_ARCH:-}
+
+detect_prebuilt_arch() {
+    if [ -n "$FUZIX_PREBUILT_ARCH" ]; then
+        case "$FUZIX_PREBUILT_ARCH" in
+            linux-amd64|linux-arm64)
+                printf '%s\n' "$FUZIX_PREBUILT_ARCH"
+                return 0
+                ;;
+            *)
+                echo "Unsupported FUZIX_PREBUILT_ARCH: $FUZIX_PREBUILT_ARCH" >&2
+                echo "Supported: linux-amd64, linux-arm64" >&2
+                exit 1
+                ;;
+        esac
+    fi
+
+    case "$(uname -m)" in
+        x86_64|amd64) printf '%s\n' linux-amd64 ;;
+        arm64|aarch64) printf '%s\n' linux-arm64 ;;
+        *)
+            echo "Unsupported host architecture: $(uname -m)" >&2
+            echo "Set FUZIX_PREBUILT_ARCH to linux-amd64 or linux-arm64." >&2
+            exit 1
+            ;;
+    esac
+}
+
+PREBUILT_ARCH=$(detect_prebuilt_arch)
+PREBUILT_DIR="$STATE_DIR/prebuilt/$PREBUILT_ARCH"
+DOCKER_PLATFORM=
+case "$PREBUILT_ARCH" in
+    linux-amd64) DOCKER_PLATFORM=linux/amd64 ;;
+    linux-arm64) DOCKER_PLATFORM=linux/arm64 ;;
+esac
+DOCKER_IMAGE=${FUZIX_DOCKER_IMAGE:-fuzix-sh:debian-trixie-$PREBUILT_ARCH}
+PATH=/opt/fcc/bin:$PATH
 export PATH
 
 usage() {
     cat <<EOF
 Usage:
-  ./fuzix-playground.sh init
-  ./fuzix-playground.sh setup
-  ./fuzix-playground.sh compile <source.c> [program-name]
-  ./fuzix-playground.sh image <program-name>
-  ./fuzix-playground.sh run [-v] <program-name> [-- arg...]
-  ./fuzix-playground.sh shell [program-name]
-  ./fuzix-playground.sh test [-v] <source.c> [program-name] [-- arg...]
+  ./fuzix.sh compile <source.c> [program-name]
+  ./fuzix.sh image <program-name>
+  ./fuzix.sh run [-v] <program-name> [-- arg...]
+  ./fuzix.sh shell
+  ./fuzix.sh test [-v] <source.c> [program-name] [-- arg...]
 
 Environment:
-  FUZIX_PLAYGROUND_DIR  state dir, default: ./.fuzix-playground
-  FUZIX_REF             FUZIX git ref, default: v0.4
-  FUZIX_CPU             compiler CPU, default: 8080
-  FUZIX_BUILD_FROM_SOURCE=1  build FUZIX images instead of downloading release images
-  FUZIX_REBUILD_DOCKER=1     force Docker image rebuild
-  FUZIX_TIMEOUT         emulator check timeout, default: 45 seconds
+  FUZIX_SH_DIR    state dir, default: ./.fuzix-sh
+  FUZIX_CPU               compiler CPU, default: 8080
+  FUZIX_DOCKER_IMAGE      runtime Docker image name
+  FUZIX_REBUILD_DOCKER=1  force Docker image rebuild
+  FUZIX_TIMEOUT           emulator check timeout, default: 45 seconds
+  FUZIX_PREBUILT_REPO     GitHub repo with release assets, default: notKitory/fuzix-sh
+  FUZIX_PREBUILT_RELEASE  release tag or latest, default: latest
+  FUZIX_PREBUILT_ARCH     linux-amd64 or linux-arm64
 EOF
 }
 
@@ -48,7 +76,85 @@ need() {
 }
 
 host_notice() {
-    echo "Fuzix playground: Ctrl-] force-exits the interactive emulator."
+    echo "Ctrl-] force-shutdowns the emulator."
+}
+
+release_asset_url() {
+    asset=$1
+    if [ "$FUZIX_PREBUILT_RELEASE" = latest ]; then
+        printf 'https://github.com/%s/releases/latest/download/%s\n' \
+            "$FUZIX_PREBUILT_REPO" "$asset"
+    else
+        printf 'https://github.com/%s/releases/download/%s/%s\n' \
+            "$FUZIX_PREBUILT_REPO" "$FUZIX_PREBUILT_RELEASE" "$asset"
+    fi
+}
+
+validate_prebuilt() {
+    dir=$1
+    missing=0
+    for path in \
+        "$dir/opt-fcc/bin/fcc" \
+        "$dir/opt-fcc/bin/asz80" \
+        "$dir/opt-fcc/bin/ldz80" \
+        "$dir/fuzix/include/stdio.h" \
+        "$dir/fuzix/include/$FUZIX_CPU" \
+        "$dir/fuzix/libs/crt0_${FUZIX_CPU}.o" \
+        "$dir/fuzix/libs/libc${FUZIX_CPU}.a" \
+        "$dir/fuzix/tools/binman85" \
+        "$dir/fuzix/ucp" \
+        "$dir/fuzix/images/boot.dsk" \
+        "$dir/fuzix/images/hd-fuzix.dsk" \
+        "$dir/z80pack/cpmsim/cpmsim" \
+        "$dir/z80pack/cpmsim/srctools"
+    do
+        if [ ! -e "$path" ]; then
+            echo "Missing prebuilt file: $path" >&2
+            missing=1
+        fi
+    done
+    [ "$missing" = 0 ]
+}
+
+ensure_prebuilt() {
+    need curl
+    need tar
+
+    if [ -f "$PREBUILT_DIR/.complete" ] && validate_prebuilt "$PREBUILT_DIR" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    mkdir -p "$STATE_DIR/prebuilt"
+    tmp="$PREBUILT_DIR.tmp.$$"
+    rm -rf "$tmp"
+    mkdir -p "$tmp"
+
+    for asset in \
+        "fuzix-toolchain-$PREBUILT_ARCH.tar.gz" \
+        "fuzix-runtime-$PREBUILT_ARCH.tar.gz" \
+        "z80pack-runtime-$PREBUILT_ARCH.tar.gz"
+    do
+        url=$(release_asset_url "$asset")
+        archive="$tmp/$asset"
+        echo "Downloading $url"
+        if ! curl -fL --retry 3 -o "$archive" "$url"; then
+            echo "Could not download release asset: $asset" >&2
+            echo "Repo: $FUZIX_PREBUILT_REPO, release: $FUZIX_PREBUILT_RELEASE, arch: $PREBUILT_ARCH" >&2
+            echo "Override with FUZIX_PREBUILT_REPO, FUZIX_PREBUILT_RELEASE, or FUZIX_PREBUILT_ARCH." >&2
+            rm -rf "$tmp"
+            exit 1
+        fi
+        tar -xzf "$archive" -C "$tmp"
+    done
+
+    validate_prebuilt "$tmp" || {
+        rm -rf "$tmp"
+        exit 1
+    }
+
+    rm -rf "$PREBUILT_DIR"
+    mv "$tmp" "$PREBUILT_DIR"
+    date -u '+%Y-%m-%dT%H:%M:%SZ' >"$PREBUILT_DIR/.complete"
 }
 
 dockerfile() {
@@ -57,30 +163,9 @@ dockerfile() {
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    bison \
-    build-essential \
-    automake \
-    byacc \
     ca-certificates \
-    curl \
     expect \
-    flex \
-    git \
-    gputils \
-    libboost-dev \
-    libboost-program-options-dev \
-    libbsd-dev \
-    libjpeg-dev \
-    make \
     perl \
-    pkg-config \
-    sudo \
-    tcl \
-    texinfo \
-    wget \
-    zlib1g-dev \
-    && (update-alternatives --set yacc /usr/bin/byacc || true) \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/opt/fcc/bin:/usr/local/bin:/usr/bin:/bin
@@ -95,200 +180,39 @@ host_docker_build() {
     fi
 
     dockerfile
-    docker build -t "$DOCKER_IMAGE" "$STATE_DIR"
+    docker build --platform "$DOCKER_PLATFORM" -t "$DOCKER_IMAGE" "$STATE_DIR"
 }
 
 docker_run() {
     need docker
-    mkdir -p "$STATE_DIR/opt-fcc"
-    docker run --rm -i \
+    ensure_prebuilt
+    host_docker_build
+    docker run --rm -i --platform "$DOCKER_PLATFORM" \
         -v "$ROOT_DIR:/workspace" \
-        -v "$STATE_DIR/opt-fcc:/opt/fcc" \
+        -v "$PREBUILT_DIR/opt-fcc:/opt/fcc" \
         -w /workspace \
-        -e FUZIX_PLAYGROUND_DIR=/workspace/.fuzix-playground \
-        -e FUZIX_REF="$FUZIX_REF" \
-        -e FUZIX_REPO="$FUZIX_REPO" \
-        -e FUZIX_BINTOOLS_REPO="$FUZIX_BINTOOLS_REPO" \
-        -e FUZIX_FCC_REPO="$FUZIX_FCC_REPO" \
-        -e Z80PACK_REPO="$Z80PACK_REPO" \
-        -e SDCC_REPO="$SDCC_REPO" \
-        -e FUZIX_IMAGE_BASE="$FUZIX_IMAGE_BASE" \
+        -e FUZIX_SH_DIR=/workspace/.fuzix-sh \
+        -e FUZIX_PREBUILT_DIR="/workspace/.fuzix-sh/prebuilt/$PREBUILT_ARCH" \
         -e FUZIX_CPU="$FUZIX_CPU" \
-        -e FUZIX_BUILD_FROM_SOURCE="$FUZIX_BUILD_FROM_SOURCE" \
         -e FUZIX_TIMEOUT="$TIMEOUT" \
         "$DOCKER_IMAGE" \
-        /bin/sh /workspace/fuzix-playground.sh _inside "$@"
+        /bin/sh /workspace/fuzix.sh _inside "$@"
 }
 
 docker_run_tty() {
     need docker
-    mkdir -p "$STATE_DIR/opt-fcc"
-    docker run --rm -it \
+    ensure_prebuilt
+    host_docker_build
+    docker run --rm -it --platform "$DOCKER_PLATFORM" \
         -v "$ROOT_DIR:/workspace" \
-        -v "$STATE_DIR/opt-fcc:/opt/fcc" \
+        -v "$PREBUILT_DIR/opt-fcc:/opt/fcc" \
         -w /workspace \
-        -e FUZIX_PLAYGROUND_DIR=/workspace/.fuzix-playground \
-        -e FUZIX_REF="$FUZIX_REF" \
-        -e FUZIX_REPO="$FUZIX_REPO" \
-        -e FUZIX_BINTOOLS_REPO="$FUZIX_BINTOOLS_REPO" \
-        -e FUZIX_FCC_REPO="$FUZIX_FCC_REPO" \
-        -e Z80PACK_REPO="$Z80PACK_REPO" \
-        -e SDCC_REPO="$SDCC_REPO" \
-        -e FUZIX_IMAGE_BASE="$FUZIX_IMAGE_BASE" \
+        -e FUZIX_SH_DIR=/workspace/.fuzix-sh \
+        -e FUZIX_PREBUILT_DIR="/workspace/.fuzix-sh/prebuilt/$PREBUILT_ARCH" \
         -e FUZIX_CPU="$FUZIX_CPU" \
-        -e FUZIX_BUILD_FROM_SOURCE="$FUZIX_BUILD_FROM_SOURCE" \
         -e FUZIX_TIMEOUT="$TIMEOUT" \
         "$DOCKER_IMAGE" \
-        /bin/sh /workspace/fuzix-playground.sh _inside "$@"
-}
-
-git_clone_once() {
-    url=$1
-    dir=$2
-    ref=${3:-}
-
-    if [ -d "$dir/.git" ]; then
-        return 0
-    fi
-
-    mkdir -p "$(dirname "$dir")"
-    if [ -n "$ref" ]; then
-        if git clone --depth 1 --branch "$ref" "$url" "$dir"; then
-            return 0
-        fi
-        rm -rf "$dir"
-        case "$ref" in
-            v*) alt_ref=${ref#v} ;;
-            *) alt_ref=v$ref ;;
-        esac
-        git clone --depth 1 --branch "$alt_ref" "$url" "$dir"
-    else
-        git clone --depth 1 "$url" "$dir"
-    fi
-}
-
-inside_setup_sdcc() {
-    if command -v sdcc >/dev/null 2>&1; then
-        return 0
-    fi
-
-    git_clone_once "$SDCC_REPO" "$STATE_DIR/src/sdcc280" ""
-    cd "$STATE_DIR/src/sdcc280/sdcc"
-    if [ ! -f Makefile ]; then
-        ./configure --prefix="$TOOL_DIR/sdcc" --disable-pic14-port --disable-pic16-port
-    fi
-    make
-    make install
-}
-
-inside_fetch_images() {
-    pristine_dir="$STATE_DIR/downloads/z80pack"
-    pristine_boot="$pristine_dir/boot.dsk"
-    pristine_hd="$pristine_dir/hd-fuzix.dsk"
-    boot="$STATE_DIR/src/FUZIX/Images/z80pack/boot.dsk"
-    hd="$STATE_DIR/src/FUZIX/Images/z80pack/hd-fuzix.dsk"
-
-    mkdir -p "$pristine_dir"
-    [ -s "$pristine_boot" ] || wget -O "$pristine_boot" "$FUZIX_IMAGE_BASE/boot.dsk"
-    [ -s "$pristine_hd" ] || wget -O "$pristine_hd" "$FUZIX_IMAGE_BASE/hd-fuzix.dsk"
-
-    mkdir -p "$(dirname "$boot")"
-    cp "$pristine_boot" "$boot"
-    cp "$pristine_hd" "$hd"
-}
-
-inside_setup_fcc() {
-    if { command -v fcc >/dev/null 2>&1 || [ -x /opt/fcc/bin/cc ]; } \
-        && command -v asz80 >/dev/null 2>&1 \
-        && command -v ldz80 >/dev/null 2>&1; then
-        if [ -x /opt/fcc/bin/fcc ]; then
-            ln -sf fcc /opt/fcc/bin/cc85
-        fi
-        return 0
-    fi
-
-    git_clone_once "$FUZIX_BINTOOLS_REPO" "$STATE_DIR/src/Fuzix-Bintools" ""
-    cd "$STATE_DIR/src/Fuzix-Bintools"
-    make install
-
-    git_clone_once "$FUZIX_FCC_REPO" "$STATE_DIR/src/Fuzix-Compiler-Kit" ""
-    cd "$STATE_DIR/src/Fuzix-Compiler-Kit"
-    make bootstuff
-    make install
-
-    ln -sf fcc /opt/fcc/bin/cc85
-}
-
-inside_setup_fuzix() {
-    git_clone_once "$FUZIX_REPO" "$STATE_DIR/src/FUZIX" "$FUZIX_REF"
-
-    cd "$STATE_DIR/src/FUZIX"
-    if [ "$FUZIX_BUILD_FROM_SOURCE" = 1 ]; then
-        perl -0pi -e 's/^TARGET\s*\??=.*$/TARGET ?= z80pack/m' Makefile
-
-        make
-        make diskimage
-    else
-        inside_fetch_images
-    fi
-
-    if [ -f Standalone/Makefile ] && [ ! -x Standalone/ucp ]; then
-        make -C Standalone ucp
-    fi
-}
-
-inside_setup_userlib() {
-    fuzix="$STATE_DIR/src/FUZIX"
-    libs="$fuzix/Library/libs"
-
-    ln -sf fcc /opt/fcc/bin/cc85
-    if [ ! -x "$fuzix/Library/tools/binman85" ] \
-        || [ ! -x "$fuzix/Library/tools/liberror" ] \
-        || [ ! -x "$fuzix/Library/tools/syscall_8080" ]; then
-        make -C "$fuzix/Library" tools/binman85 tools/liberror tools/syscall_8080
-    fi
-
-    if [ ! -s "$libs/libc8080.a" ] || [ ! -s "$libs/crt0_8080.o" ]; then
-        (
-            cd "$libs"
-            make -f Makefile.8080
-        )
-    fi
-}
-
-inside_setup_z80pack() {
-    git_clone_once "$Z80PACK_REPO" "$STATE_DIR/src/z80pack" ""
-
-    cd "$STATE_DIR/src/z80pack"
-    if [ -x cpmsim/cpmsim ]; then
-        if [ -d cpmsim/srctools ] && [ ! -x cpmsim/srctools/cpmrecv ]; then
-            make -C cpmsim/srctools
-        fi
-        return 0
-    fi
-
-    if [ -d cpmsim/srcsim ]; then
-        (
-            cd cpmsim/srcsim
-            make || make -f Makefile.linux || make -f Makefile.linuxc
-        )
-    fi
-
-    if [ ! -x cpmsim/cpmsim ]; then
-        make
-    fi
-
-    if [ -d cpmsim/srctools ] && [ ! -x cpmsim/srctools/cpmrecv ]; then
-        make -C cpmsim/srctools
-    fi
-}
-
-inside_setup() {
-    mkdir -p "$STATE_DIR/bin" "$STATE_DIR/images" "$STATE_DIR/src"
-    inside_setup_fcc
-    inside_setup_fuzix
-    inside_setup_userlib
-    inside_setup_z80pack
+        /bin/sh /workspace/fuzix.sh _inside "$@"
 }
 
 program_name_from_source() {
@@ -306,9 +230,30 @@ validate_fuzix_token() {
     esac
 }
 
+inside_prebuilt_dir() {
+    dir=${FUZIX_PREBUILT_DIR:-}
+    [ -n "$dir" ] || {
+        echo "FUZIX_PREBUILT_DIR is not set inside the container." >&2
+        exit 1
+    }
+    [ -d "$dir" ] || {
+        echo "Prebuilt runtime not found: $dir" >&2
+        exit 1
+    }
+    printf '%s\n' "$dir"
+}
+
+inside_ensure_images() {
+    prebuilt=$(inside_prebuilt_dir)
+    mkdir -p "$STATE_DIR/images"
+    [ -s "$STATE_DIR/images/boot.dsk" ] || cp "$prebuilt/fuzix/images/boot.dsk" "$STATE_DIR/images/boot.dsk"
+    [ -s "$STATE_DIR/images/hd-fuzix.dsk" ] || cp "$prebuilt/fuzix/images/hd-fuzix.dsk" "$STATE_DIR/images/hd-fuzix.dsk"
+}
+
 inside_compile() {
     src=$1
     name=${2:-$(program_name_from_source "$src")}
+    prebuilt=$(inside_prebuilt_dir)
 
     [ -f "$src" ] || {
         echo "Source file not found: $src" >&2
@@ -330,32 +275,31 @@ inside_compile() {
     elif command -v fcc >/dev/null 2>&1; then
         compiler=$(command -v fcc)
     else
-        echo "No FUZIX compiler driver found. Run setup first." >&2
+        echo "No FUZIX compiler driver found in /opt/fcc/bin." >&2
         exit 1
     fi
 
     build_dir="$STATE_DIR/build/$name"
-    fuzix="$STATE_DIR/src/FUZIX"
     if [ -e "$build_dir" ] && [ ! -d "$build_dir" ]; then
         rm -f "$build_dir"
     fi
     mkdir -p "$build_dir"
 
-    export FUZIX_ROOT="$fuzix"
+    export FUZIX_ROOT="$prebuilt/fuzix"
     "$compiler" "-m$FUZIX_CPU" -Os -D__STDC__ -c \
-        -I"$STATE_DIR/src/FUZIX/Library/include" \
-        -I"$STATE_DIR/src/FUZIX/Library/include/$FUZIX_CPU" \
+        -I"$prebuilt/fuzix/include" \
+        -I"$prebuilt/fuzix/include/$FUZIX_CPU" \
         "$source_path" -o "$build_dir/$name.o"
 
     "$compiler" -s "-m$FUZIX_CPU" \
-        "$fuzix/Library/libs/crt0_${FUZIX_CPU}.o" \
+        "$prebuilt/fuzix/libs/crt0_${FUZIX_CPU}.o" \
         "$build_dir/$name.o" \
         -o "$build_dir/$name.b1" -M \
-        -L"$fuzix/Library/libs" \
+        -L"$prebuilt/fuzix/libs" \
         "-lc$FUZIX_CPU" "-lc$FUZIX_CPU" "-lc$FUZIX_CPU"
 
     cp "$build_dir/$name.b1" "$out"
-    "$fuzix/Library/tools/binman85" "$out"
+    "$prebuilt/fuzix/tools/binman85" "$out"
 
     [ -s "$out" ] || {
         echo "Compiler did not create $out" >&2
@@ -365,51 +309,25 @@ inside_compile() {
     echo "Compiled: $out"
 }
 
-find_ucp() {
-    for p in \
-        "$STATE_DIR/src/FUZIX/Standalone/filesystem-src/ucp" \
-        "$STATE_DIR/src/FUZIX/Standalone/ucp"
-    do
-        if [ -x "$p" ]; then
-            printf '%s\n' "$p"
-            return 0
-        fi
-    done
-
-    find "$STATE_DIR/src/FUZIX" -type f -name ucp -perm -111 | head -n 1
-}
-
 inside_image() {
     name=$1
+    prebuilt=$(inside_prebuilt_dir)
     app="$STATE_DIR/bin/$name"
-    boot="$STATE_DIR/src/FUZIX/Images/z80pack/boot.dsk"
-    hd="$STATE_DIR/src/FUZIX/Images/z80pack/hd-fuzix.dsk"
     out_boot="$STATE_DIR/images/boot.dsk"
-    out_hd="$STATE_DIR/images/hd-fuzix-$name.dsk"
+    out_hd="$STATE_DIR/images/hd-fuzix.dsk"
+    ucp="$prebuilt/fuzix/ucp"
 
     [ -s "$app" ] || {
         echo "Program binary not found: $app" >&2
-        echo "Run: ./fuzix-playground.sh compile <source.c> $name" >&2
+        echo "Run: ./fuzix.sh compile <source.c> $name" >&2
         exit 1
     }
-    [ -s "$boot" ] || {
-        echo "Boot image not found. Run setup first." >&2
-        exit 1
-    }
-    [ -s "$hd" ] || {
-        echo "Root filesystem image not found. Run setup first." >&2
+    [ -x "$ucp" ] || {
+        echo "ucp not found in prebuilt runtime: $ucp" >&2
         exit 1
     }
 
-    ucp=$(find_ucp)
-    [ -n "$ucp" ] || {
-        echo "ucp not found. Run setup first." >&2
-        exit 1
-    }
-
-    mkdir -p "$STATE_DIR/images"
-    cp "$boot" "$out_boot"
-    cp "$hd" "$out_hd"
+    inside_ensure_images
 
     (
         cd "$STATE_DIR/bin"
@@ -420,13 +338,24 @@ inside_image() {
     echo "Root image: $out_hd"
 }
 
+inside_link_disks() {
+    z80=$1
+    boot=$2
+    hd=$3
+
+    mkdir -p "$z80/disks"
+    ln -sf "$boot" "$z80/disks/drivea.dsk"
+    ln -sf "$hd" "$z80/disks/drivei.dsk"
+}
+
 inside_run() {
     verbose=$1
     name=$2
     shift 2
+    prebuilt=$(inside_prebuilt_dir)
     boot="$STATE_DIR/images/boot.dsk"
-    hd="$STATE_DIR/images/hd-fuzix-$name.dsk"
-    z80="$STATE_DIR/src/z80pack/cpmsim"
+    hd="$STATE_DIR/images/hd-fuzix.dsk"
+    z80="$prebuilt/z80pack/cpmsim"
     run_line="/bin/$name"
 
     validate_fuzix_token "$name"
@@ -444,13 +373,11 @@ inside_run() {
         exit 1
     }
     [ -x "$z80/cpmsim" ] || {
-        echo "cpmsim not found. Run setup first." >&2
+        echo "cpmsim not found in prebuilt runtime: $z80/cpmsim" >&2
         exit 1
     }
 
-    mkdir -p "$z80/disks"
-    cp "$boot" "$z80/disks/drivea.dsk"
-    cp "$hd" "$z80/disks/drivei.dsk"
+    inside_link_disks "$z80" "$boot" "$hd"
 
     expect_file="$STATE_DIR/run-$name.expect"
     log_file="$STATE_DIR/run-$name.log"
@@ -537,31 +464,18 @@ EOF
 }
 
 inside_shell() {
-    name=${1:-}
+    prebuilt=$(inside_prebuilt_dir)
     boot="$STATE_DIR/images/boot.dsk"
-    base_hd="$STATE_DIR/src/FUZIX/Images/z80pack/hd-fuzix.dsk"
-    z80="$STATE_DIR/src/z80pack/cpmsim"
+    hd="$STATE_DIR/images/hd-fuzix.dsk"
+    z80="$prebuilt/z80pack/cpmsim"
 
-    if [ -n "$name" ]; then
-        hd="$STATE_DIR/images/hd-fuzix-$name.dsk"
-    else
-        hd="$STATE_DIR/images/hd-fuzix-shell.dsk"
-        cp "$base_hd" "$hd"
-    fi
-
-    [ -s "$boot" ] || cp "$STATE_DIR/src/FUZIX/Images/z80pack/boot.dsk" "$boot"
-    [ -s "$hd" ] || {
-        echo "Root image not found. Run setup first, or image <program-name> for app image." >&2
-        exit 1
-    }
+    inside_ensure_images
     [ -x "$z80/cpmsim" ] || {
-        echo "cpmsim not found. Run setup first." >&2
+        echo "cpmsim not found in prebuilt runtime: $z80/cpmsim" >&2
         exit 1
     }
 
-    mkdir -p "$z80/disks"
-    cp "$boot" "$z80/disks/drivea.dsk"
-    cp "$hd" "$z80/disks/drivei.dsk"
+    inside_link_disks "$z80" "$boot" "$hd"
 
     expect_file="$STATE_DIR/shell.expect"
     cat >"$expect_file" <<EOF
@@ -618,44 +532,14 @@ EOF
     expect "$expect_file"
 }
 
-host_init() {
-    mkdir -p "$ROOT_DIR/programs"
-    sample="$ROOT_DIR/programs/hello.c"
-    if [ ! -f "$sample" ]; then
-        cat >"$sample" <<'EOF'
-#include <stdio.h>
-
-int main(int argc, char **argv)
-{
-    argc = argc;
-    argv = argv;
-    puts("hello from fuzix");
-    return 0;
-}
-EOF
-    fi
-    echo "Sample source: $sample"
-}
-
 cmd=${1:-}
 case "$cmd" in
-    init)
-        host_notice
-        host_init
-        ;;
-    setup)
-        host_notice
-        host_docker_build
-        docker_run setup
-        ;;
     compile)
-        [ $# -ge 2 ] || { usage; exit 1; }
-        host_notice
+        [ $# -ge 2 ] && [ $# -le 3 ] || { usage; exit 1; }
         docker_run compile "$2" "${3:-}"
         ;;
     image)
         [ $# -eq 2 ] || { usage; exit 1; }
-        host_notice
         docker_run image "$2"
         ;;
     run)
@@ -678,10 +562,9 @@ case "$cmd" in
         docker_run run "$verbose" "$name" "$@"
         ;;
     shell)
+        [ $# -eq 1 ] || { usage; exit 1; }
         host_notice
-        host_docker_build
-        docker_run setup
-        docker_run_tty shell "${2:-}"
+        docker_run_tty shell
         ;;
     test)
         shift
@@ -692,11 +575,6 @@ case "$cmd" in
         fi
         [ $# -ge 1 ] || { usage; exit 1; }
         [ "$verbose" = 1 ] && host_notice
-        if [ "$verbose" = 1 ]; then
-            host_docker_build
-        else
-            host_docker_build >/dev/null
-        fi
         src=$1
         shift
         if [ "${1:-}" = "--" ]; then
@@ -713,11 +591,9 @@ case "$cmd" in
             fi
         fi
         if [ "$verbose" = 1 ]; then
-            docker_run setup
             docker_run compile "$src" "$name"
             docker_run image "$name"
         else
-            docker_run setup >/dev/null
             docker_run compile "$src" "$name" >/dev/null
             docker_run image "$name" >/dev/null
         fi
@@ -727,9 +603,6 @@ case "$cmd" in
         shift
         inside_cmd=${1:-}
         case "$inside_cmd" in
-            setup)
-                inside_setup
-                ;;
             compile)
                 shift
                 inside_compile "$@"

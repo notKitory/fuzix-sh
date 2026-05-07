@@ -1,0 +1,190 @@
+name: Build prebuilt runtime
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: linux-amd64
+            runner: ubuntu-24.04
+          - arch: linux-arm64
+            runner: ubuntu-24.04-arm
+
+    env:
+      FUZIX_REF: v0.4
+      FUZIX_REPO: https://github.com/EtchedPixels/FUZIX.git
+      FUZIX_BINTOOLS_REPO: https://github.com/EtchedPixels/Fuzix-Bintools.git
+      FUZIX_FCC_REPO: https://github.com/EtchedPixels/Fuzix-Compiler-Kit.git
+      Z80PACK_REPO: https://github.com/udo-munk/z80pack.git
+      FUZIX_IMAGE_BASE: https://fuzix.org/downloads/0.4/z80pack
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            automake \
+            byacc \
+            bison \
+            build-essential \
+            ca-certificates \
+            curl \
+            flex \
+            git \
+            gputils \
+            libboost-dev \
+            libboost-program-options-dev \
+            libbsd-dev \
+            libjpeg-dev \
+            make \
+            perl \
+            pkg-config \
+            tcl \
+            texinfo \
+            zlib1g-dev
+          sudo update-alternatives --set yacc /usr/bin/byacc || true
+
+      - name: Build toolchain
+        run: |
+          set -eux
+          root="$PWD/work"
+          mkdir -p "$root/src"
+          sudo rm -rf /opt/fcc
+          sudo mkdir -p /opt/fcc
+          sudo chown "$USER:$USER" /opt/fcc
+
+          git clone --depth 1 "$FUZIX_BINTOOLS_REPO" "$root/src/Fuzix-Bintools"
+          make -C "$root/src/Fuzix-Bintools" install
+
+          git clone --depth 1 "$FUZIX_FCC_REPO" "$root/src/Fuzix-Compiler-Kit"
+          make -C "$root/src/Fuzix-Compiler-Kit" bootstuff
+          make -C "$root/src/Fuzix-Compiler-Kit" install
+          ln -sf fcc /opt/fcc/bin/cc85
+
+      - name: Build FUZIX runtime files
+        run: |
+          set -eux
+          root="$PWD/work"
+          export PATH="/opt/fcc/bin:$PATH"
+
+          if ! git clone --depth 1 --branch "$FUZIX_REF" "$FUZIX_REPO" "$root/src/FUZIX"; then
+            alt_ref="${FUZIX_REF#v}"
+            git clone --depth 1 --branch "$alt_ref" "$FUZIX_REPO" "$root/src/FUZIX"
+          fi
+
+          mkdir -p "$root/downloads/z80pack"
+          curl -fL --retry 3 -o "$root/downloads/z80pack/boot.dsk" "$FUZIX_IMAGE_BASE/boot.dsk"
+          curl -fL --retry 3 -o "$root/downloads/z80pack/hd-fuzix.dsk" "$FUZIX_IMAGE_BASE/hd-fuzix.dsk"
+
+          make -C "$root/src/FUZIX/Standalone" ucp
+          make -C "$root/src/FUZIX/Library" tools/binman85 tools/liberror tools/syscall_8080
+          make -C "$root/src/FUZIX/Library/libs" -f Makefile.8080
+
+      - name: Build z80pack runtime files
+        run: |
+          set -eux
+          root="$PWD/work"
+
+          git clone --depth 1 "$Z80PACK_REPO" "$root/src/z80pack"
+          if [ -d "$root/src/z80pack/cpmsim/srcsim" ]; then
+            (
+              cd "$root/src/z80pack/cpmsim/srcsim"
+              make || make -f Makefile.linux || make -f Makefile.linuxc
+            )
+          fi
+          if [ ! -x "$root/src/z80pack/cpmsim/cpmsim" ]; then
+            make -C "$root/src/z80pack"
+          fi
+          make -C "$root/src/z80pack/cpmsim/srctools"
+
+      - name: Package release assets
+        run: |
+          set -eux
+          root="$PWD/work"
+          pkg="$PWD/pkg"
+          dist="$PWD/dist"
+          arch="${{ matrix.arch }}"
+
+          rm -rf "$pkg" "$dist"
+          mkdir -p "$pkg/toolchain/opt-fcc" \
+            "$pkg/fuzix/fuzix/include" \
+            "$pkg/fuzix/fuzix/libs" \
+            "$pkg/fuzix/fuzix/tools" \
+            "$pkg/fuzix/fuzix/images" \
+            "$pkg/z80pack/z80pack/cpmsim/srctools" \
+            "$pkg/z80pack/z80pack/cpmsim/conf" \
+            "$pkg/z80pack/z80pack/cpmsim/disks" \
+            "$dist"
+
+          cp -a /opt/fcc/. "$pkg/toolchain/opt-fcc/"
+          cp -a "$root/src/FUZIX/Library/include/." "$pkg/fuzix/fuzix/include/"
+          cp "$root/src/FUZIX/Library/libs"/*.a "$pkg/fuzix/fuzix/libs/"
+          cp "$root/src/FUZIX/Library/libs"/*.o "$pkg/fuzix/fuzix/libs/"
+          cp "$root/src/FUZIX/Library/tools/binman85" "$pkg/fuzix/fuzix/tools/binman85"
+          cp "$root/src/FUZIX/Standalone/ucp" "$pkg/fuzix/fuzix/ucp"
+          cp "$root/downloads/z80pack/boot.dsk" "$pkg/fuzix/fuzix/images/boot.dsk"
+          cp "$root/downloads/z80pack/hd-fuzix.dsk" "$pkg/fuzix/fuzix/images/hd-fuzix.dsk"
+
+          cp "$root/src/z80pack/cpmsim/cpmsim" "$pkg/z80pack/z80pack/cpmsim/cpmsim"
+          cp -a "$root/src/z80pack/cpmsim/conf/." "$pkg/z80pack/z80pack/cpmsim/conf/"
+          for tool in cpmrecv cpmsend ptp2bin mkdskimg bin2hex cpmr.sh cpmw.sh; do
+            if [ -x "$root/src/z80pack/cpmsim/srctools/$tool" ]; then
+              cp "$root/src/z80pack/cpmsim/srctools/$tool" "$pkg/z80pack/z80pack/cpmsim/srctools/"
+            fi
+          done
+
+          test -x "$pkg/toolchain/opt-fcc/bin/fcc"
+          test -x "$pkg/toolchain/opt-fcc/bin/asz80"
+          test -x "$pkg/toolchain/opt-fcc/bin/ldz80"
+          test -f "$pkg/fuzix/fuzix/include/stdio.h"
+          test -d "$pkg/fuzix/fuzix/include/8080"
+          test -f "$pkg/fuzix/fuzix/libs/crt0_8080.o"
+          test -f "$pkg/fuzix/fuzix/libs/libc8080.a"
+          test -x "$pkg/fuzix/fuzix/tools/binman85"
+          test -x "$pkg/fuzix/fuzix/ucp"
+          test -s "$pkg/fuzix/fuzix/images/boot.dsk"
+          test -s "$pkg/fuzix/fuzix/images/hd-fuzix.dsk"
+          test -x "$pkg/z80pack/z80pack/cpmsim/cpmsim"
+          test -d "$pkg/z80pack/z80pack/cpmsim/srctools"
+
+          tar -C "$pkg/toolchain" -czf "$dist/fuzix-toolchain-$arch.tar.gz" .
+          tar -C "$pkg/fuzix" -czf "$dist/fuzix-runtime-$arch.tar.gz" .
+          tar -C "$pkg/z80pack" -czf "$dist/z80pack-runtime-$arch.tar.gz" .
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish latest prebuilt release
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Download packaged assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: prebuilt-latest
+          name: Latest prebuilt runtime
+          make_latest: true
+          overwrite_files: true
+          files: dist/*.tar.gz

@@ -55,8 +55,8 @@ dkms.conf
 *.dwo
 *.log
 
-# Local Fuzix playground state: downloaded sources, toolchains, images, logs.
-.fuzix-playground/
+# Local fuzix.sh state: downloaded sources, toolchains, images, logs.
+.fuzix-sh/
 
 # Fuzix / emulator disk images and generated binary formats.
 *.dsk
