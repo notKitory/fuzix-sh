@@ -344,6 +344,7 @@ inside_make() {
 inside_cp() {
     src=$1
     dest=$2
+    mode=${3:-}
     prebuilt=$(inside_prebuilt_dir)
     out_boot="$STATE_DIR/images/boot.dsk"
     out_hd="$STATE_DIR/images/hd-fuzix.dsk"
@@ -379,9 +380,17 @@ inside_cp() {
         cd "$(dirname -- "$src")"
         src_name=$(basename -- "$src")
         if [ "$src_name" = "$dest_name" ]; then
-            printf 'cd %s\nbget %s\nexit\n' "$dest_dir" "$src_name" | "$ucp" "$out_hd"
+            if [ -n "$mode" ]; then
+                printf 'cd %s\nbget %s\nchmod %s %s\nexit\n' "$dest_dir" "$src_name" "$mode" "$dest_name" | "$ucp" "$out_hd"
+            else
+                printf 'cd %s\nbget %s\nexit\n' "$dest_dir" "$src_name" | "$ucp" "$out_hd"
+            fi
         else
-            printf 'cd %s\nbget %s\nmv %s %s\nexit\n' "$dest_dir" "$src_name" "$src_name" "$dest_name" | "$ucp" "$out_hd"
+            if [ -n "$mode" ]; then
+                printf 'cd %s\nbget %s\nmv %s %s\nchmod %s %s\nexit\n' "$dest_dir" "$src_name" "$src_name" "$dest_name" "$mode" "$dest_name" | "$ucp" "$out_hd"
+            else
+                printf 'cd %s\nbget %s\nmv %s %s\nexit\n' "$dest_dir" "$src_name" "$src_name" "$dest_name" | "$ucp" "$out_hd"
+            fi
         fi
     )
 
@@ -643,10 +652,10 @@ case "$cmd" in
         fuzix_path="/bin/$name"
         if [ "$verbose" = 1 ]; then
             docker_run compile "$src"
-            docker_run cp "$app" "$fuzix_path"
+            docker_run cp "$app" "$fuzix_path" 755
         else
             docker_run compile "$src" >/dev/null
-            docker_run cp "$app" "$fuzix_path" >/dev/null
+            docker_run cp "$app" "$fuzix_path" 755 >/dev/null
         fi
         docker_run run "$verbose" "$fuzix_path" "$@"
         ;;
