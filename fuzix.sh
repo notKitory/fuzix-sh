@@ -51,8 +51,8 @@ usage() {
     cat <<EOF
 Usage:
   ./fuzix.sh compile <source.c>
-  ./fuzix.sh image
-  ./fuzix.sh run [-v] [arg...]
+  ./fuzix.sh cp <host-path> <fuzix-path>
+  ./fuzix.sh run [-v] <command> [arg...]
   ./fuzix.sh shell
   ./fuzix.sh test [-v] <source.c> [arg...]
 
@@ -76,7 +76,7 @@ need() {
 }
 
 host_notice() {
-    echo "Ctrl-] force-shutdowns the emulator."
+    echo "Ctrl-] force-shutdowns the emulator." >&2
 }
 
 release_asset_url() {
@@ -220,20 +220,6 @@ program_name_from_source() {
     printf '%s\n' "${base%.*}"
 }
 
-current_program_name() {
-    file="$STATE_DIR/current-program"
-    [ -s "$file" ] || {
-        echo "No current program. Run: ./fuzix.sh compile <source.c>" >&2
-        exit 1
-    }
-    IFS= read -r name <"$file" || name=
-    [ -n "$name" ] || {
-        echo "Current program file is empty: $file" >&2
-        exit 1
-    }
-    printf '%s\n' "$name"
-}
-
 validate_fuzix_token() {
     case "$1" in
         ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:+=,@%-]*)
@@ -320,21 +306,19 @@ inside_compile() {
         exit 1
     }
 
-    printf '%s\n' "$name" >"$STATE_DIR/current-program"
     echo "Compiled: $out"
 }
 
-inside_image() {
-    name=$(current_program_name)
+inside_cp() {
+    src=$1
+    dest=$2
     prebuilt=$(inside_prebuilt_dir)
-    app="$STATE_DIR/bin/$name"
     out_boot="$STATE_DIR/images/boot.dsk"
     out_hd="$STATE_DIR/images/hd-fuzix.dsk"
     ucp="$prebuilt/fuzix/ucp"
 
-    [ -s "$app" ] || {
-        echo "Program binary not found: $app" >&2
-        echo "Run: ./fuzix.sh compile <source.c> $name" >&2
+    [ -s "$src" ] || {
+        echo "Source file not found: $src" >&2
         exit 1
     }
     [ -x "$ucp" ] || {
@@ -344,11 +328,32 @@ inside_image() {
 
     inside_ensure_images
 
+    case "$dest" in
+        */)
+            dest_dir=${dest%/}
+            dest_name=$(basename -- "$src")
+            ;;
+        *)
+            dest_dir=$(dirname -- "$dest")
+            dest_name=$(basename -- "$dest")
+            ;;
+    esac
+    [ -n "$dest_dir" ] || dest_dir=/
+
+    validate_fuzix_token "$dest_dir"
+    validate_fuzix_token "$dest_name"
+
     (
-        cd "$STATE_DIR/bin"
-        printf 'cd /bin\nbget %s\nchmod 0755 %s\nexit\n' "$name" "$name" | "$ucp" "$out_hd"
+        cd "$(dirname -- "$src")"
+        src_name=$(basename -- "$src")
+        if [ "$src_name" = "$dest_name" ]; then
+            printf 'cd %s\nbget %s\nexit\n' "$dest_dir" "$src_name" | "$ucp" "$out_hd"
+        else
+            printf 'cd %s\nbget %s\nmv %s %s\nexit\n' "$dest_dir" "$src_name" "$src_name" "$dest_name" | "$ucp" "$out_hd"
+        fi
     )
 
+    echo "Copied: $src -> $dest"
     echo "Boot image: $out_boot"
     echo "Root image: $out_hd"
 }
@@ -365,26 +370,28 @@ inside_link_disks() {
 
 inside_run() {
     verbose=$1
-    name=$2
+    command=$2
     shift 2
     prebuilt=$(inside_prebuilt_dir)
     boot="$STATE_DIR/images/boot.dsk"
     hd="$STATE_DIR/images/hd-fuzix.dsk"
     z80="$prebuilt/z80pack/cpmsim"
-    run_line="/bin/$name"
+    run_line="$command"
 
-    validate_fuzix_token "$name"
+    validate_fuzix_token "$command"
     for arg in "$@"; do
         validate_fuzix_token "$arg"
         run_line="$run_line $arg"
     done
 
+    inside_ensure_images
+
     [ -s "$boot" ] || {
-        echo "Boot image not found. Run image first." >&2
+        echo "Boot image not found." >&2
         exit 1
     }
     [ -s "$hd" ] || {
-        echo "Root image not found. Run image first." >&2
+        echo "Root image not found." >&2
         exit 1
     }
     [ -x "$z80/cpmsim" ] || {
@@ -394,8 +401,9 @@ inside_run() {
 
     inside_link_disks "$z80" "$boot" "$hd"
 
-    expect_file="$STATE_DIR/run-$name.expect"
-    log_file="$STATE_DIR/run-$name.log"
+    run_name=$(basename -- "$command")
+    expect_file="$STATE_DIR/run-$run_name.expect"
+    log_file="$STATE_DIR/run-$run_name.log"
     cat >"$expect_file" <<EOF
 set timeout $TIMEOUT
 log_user $verbose
@@ -403,50 +411,59 @@ log_file -a -noappend "$log_file"
 cd "$z80"
 set env(PATH) "$z80/srctools:\$env(PATH)"
 proc finish_emulator {status} {
-    catch {send "\034"}
+    global emulator_spawn_id
+    catch {send -i \$emulator_spawn_id "\034"}
     after 500
-    catch {close}
-    catch {wait}
+    catch {close -i \$emulator_spawn_id}
+    catch {wait -i \$emulator_spawn_id}
     exit \$status
 }
 proc shutdown_then_finish {status} {
-    catch {send "shutdown\r"}
+    global emulator_spawn_id user_spawn_id
+    catch {send -i \$emulator_spawn_id "shutdown\r"}
     set old_timeout \$::timeout
     set timeout 10
     expect {
-        -re {halt|Halted|System halted} { }
+        -i \$user_spawn_id "\035" { finish_emulator 130 }
+        -i \$emulator_spawn_id -re {halt|Halted|System halted} { }
         timeout { }
     }
     set timeout \$old_timeout
     finish_emulator \$status
 }
 spawn ./cpmsim
+set emulator_spawn_id \$spawn_id
 expect {
-    -re {bootdev:} { send "0\r" }
+    -i \$user_spawn_id "\035" { finish_emulator 130 }
+    -i \$emulator_spawn_id -re {bootdev:} { send -i \$emulator_spawn_id "0\r" }
     timeout { puts "timeout waiting for bootdev"; finish_emulator 2 }
 }
 expect {
-    -re {login:} { send "root\r" }
+    -i \$user_spawn_id "\035" { finish_emulator 130 }
+    -i \$emulator_spawn_id -re {login:} { send -i \$emulator_spawn_id "root\r" }
     timeout { puts "timeout waiting for login"; finish_emulator 2 }
 }
 expect {
-    -re {[\$#] } { send "$run_line\r" }
+    -i \$user_spawn_id "\035" { finish_emulator 130 }
+    -i \$emulator_spawn_id -re {[\$#] } { send -i \$emulator_spawn_id "$run_line\r" }
     timeout { puts "timeout waiting for shell"; finish_emulator 2 }
 }
 EOF
 
     cat >>"$expect_file" <<'EOF'
 expect {
-    -re {[$#] } { }
+    -i $user_spawn_id "\035" { finish_emulator 130 }
+    -i $emulator_spawn_id -re {[$#] } { }
     timeout { puts "timeout waiting for program to return"; finish_emulator 3 }
 }
 EOF
 
     cat >>"$expect_file" <<'EOF'
-send "shutdown\r"
+send -i $emulator_spawn_id "shutdown\r"
 set timeout 10
 expect {
-    -re {halt|Halted|System halted} { }
+    -i $user_spawn_id "\035" { finish_emulator 130 }
+    -i $emulator_spawn_id -re {halt|Halted|System halted} { }
     timeout { }
 }
 finish_emulator 0
@@ -553,9 +570,9 @@ case "$cmd" in
         [ $# -eq 2 ] || { usage; exit 1; }
         docker_run compile "$2"
         ;;
-    image)
-        [ $# -eq 1 ] || { usage; exit 1; }
-        docker_run image
+    cp)
+        [ $# -eq 3 ] || { usage; exit 1; }
+        docker_run cp "$2" "$3"
         ;;
     run)
         shift
@@ -564,12 +581,14 @@ case "$cmd" in
             verbose=1
             shift
         fi
-        [ "$verbose" = 1 ] && host_notice
+        [ $# -ge 1 ] || { usage; exit 1; }
+        host_notice
+        command=$1
+        shift
         if [ "${1:-}" = "--" ]; then
             shift
         fi
-        name=$(current_program_name)
-        docker_run run "$verbose" "$name" "$@"
+        docker_run run "$verbose" "$command" "$@"
         ;;
     shell)
         [ $# -eq 1 ] || { usage; exit 1; }
@@ -584,21 +603,23 @@ case "$cmd" in
             shift
         fi
         [ $# -ge 1 ] || { usage; exit 1; }
-        [ "$verbose" = 1 ] && host_notice
+        host_notice
         src=$1
         shift
         if [ "${1:-}" = "--" ]; then
             shift
         fi
         name=$(program_name_from_source "$src")
+        app=".fuzix-sh/bin/$name"
+        fuzix_path="/bin/$name"
         if [ "$verbose" = 1 ]; then
             docker_run compile "$src"
-            docker_run image
+            docker_run cp "$app" "$fuzix_path"
         else
             docker_run compile "$src" >/dev/null
-            docker_run image >/dev/null
+            docker_run cp "$app" "$fuzix_path" >/dev/null
         fi
-        docker_run run "$verbose" "$name" "$@"
+        docker_run run "$verbose" "$fuzix_path" "$@"
         ;;
     _inside)
         shift
@@ -608,9 +629,9 @@ case "$cmd" in
                 shift
                 inside_compile "$@"
                 ;;
-            image)
+            cp)
                 shift
-                inside_image "$@"
+                inside_cp "$@"
                 ;;
             run)
                 shift

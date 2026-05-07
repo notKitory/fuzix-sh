@@ -12,10 +12,12 @@
 
 ## Использование
 
+Для использования достаточно скачать только [`fuzix.sh`](https://raw.githubusercontent.com/notKitory/fuzix-sh/main/fuzix.sh).
+
 ```bash
 ./fuzix.sh compile <source.c>
-./fuzix.sh image
-./fuzix.sh run [-v] [arg...]
+./fuzix.sh cp <host-path> <fuzix-path>
+./fuzix.sh run [-v] <command> [arg...]
 ./fuzix.sh shell
 ./fuzix.sh test [-v] <source.c> [arg...]
 ```
@@ -26,17 +28,20 @@
 
 | Команда | Описание |
 | --- | --- |
-| `compile <source.c>` | Компилирует C-файл в `.fuzix-sh/bin/<source-name>` и делает его текущей программой. |
-| `image` | Копирует текущую скомпилированную программу в `/bin` внутри FUZIX root-диска. |
-| `run [-v] [arg...]` | Загружает FUZIX в z80pack, запускает текущую программу, печатает вывод программы и выключает эмулятор. |
-| `shell` | Открывает интерактивный FUZIX shell. `Ctrl-]` принудительно выключает эмулятор. |
-| `test [-v] <source.c> [arg...]` | Последовательно выполняет `compile`, `image` и `run`. |
+| `compile <source.c>` | Компилирует C-файл в `.fuzix-sh/bin/<source-name>`. |
+| `cp <host-path> <fuzix-path>` | Копирует локальный файл в FUZIX root-диск по пути `<fuzix-path>`. |
+| `run [-v] <command> [arg...]` | Загружает FUZIX в z80pack, выполняет команду в FUZIX shell, печатает вывод команды и выключает эмулятор. |
+| `shell` | Открывает интерактивный FUZIX shell. |
+| `test [-v] <source.c> [arg...]` | Последовательно выполняет `compile`, `cp` и `run`. |
 
 Используйте `-v`, чтобы видеть вывод эмулятора, а не только вывод программы.
+`Ctrl-]` принудительно выключает эмулятор в `run` и `shell`.
 
-Аргументы программы передаются сразу после команды:
+Аргументы команды передаются сразу после команды:
 
 ```bash
+./fuzix.sh run ls /bin
+./fuzix.sh run /bin/hello arg1 arg2
 ./fuzix.sh test hello.c arg1 arg2
 ```
 
@@ -55,7 +60,7 @@
     └── <arch>
 ```
 
-`hd-fuzix.dsk` — единый mutable root-диск. Каждый `image` записывает текущую программу в один и тот же disk image.
+`hd-fuzix.dsk` — единый mutable root-диск. Каждый `cp` копирует указанный файл в один и тот же disk image.
 
 ## Разработка
 

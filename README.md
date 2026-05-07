@@ -12,10 +12,12 @@
 
 ## Usage
 
+To use downloading only [`fuzix.sh`](https://raw.githubusercontent.com/notKitory/fuzix-sh/main/fuzix.sh) is enough.
+
 ```bash
 ./fuzix.sh compile <source.c>
-./fuzix.sh image
-./fuzix.sh run [-v] [arg...]
+./fuzix.sh cp <host-path> <fuzix-path>
+./fuzix.sh run [-v] <command> [arg...]
 ./fuzix.sh shell
 ./fuzix.sh test [-v] <source.c> [arg...]
 ```
@@ -26,17 +28,20 @@ On the first run, the script downloads binaries into `.fuzix-sh/prebuilt/<arch>`
 
 | Command | Description |
 | --- | --- |
-| `compile <source.c>` | Compiles a C source file into `.fuzix-sh/bin/<source-name>` and makes it the current program. |
-| `image` | Copies the current compiled program into `/bin` inside the FUZIX root disk. |
-| `run [-v] [arg...]` | Boots FUZIX in z80pack, runs the current program, prints the program output, and shuts the emulator down. |
-| `shell` | Opens an interactive FUZIX shell. `Ctrl-]` force-shuts down the emulator. |
-| `test [-v] <source.c> [arg...]` | Runs `compile`, `image`, and `run` in sequence. |
+| `compile <source.c>` | Compiles a C source file into `.fuzix-sh/bin/<source-name>`. |
+| `cp <host-path> <fuzix-path>` | Copies a local file into the FUZIX root disk at `<fuzix-path>`. |
+| `run [-v] <command> [arg...]` | Boots FUZIX in z80pack, runs the command in the FUZIX shell, prints the command output, and shuts the emulator down. |
+| `shell` | Opens an interactive FUZIX shell. |
+| `test [-v] <source.c> [arg...]` | Runs `compile`, `cp`, and `run` in sequence. |
 
 Use `-v` to show emulator output instead of only the program output.
+`Ctrl-]` force-shuts down the emulator in `run` and `shell`.
 
-Program arguments are passed directly after the command:
+Command arguments are passed directly after the command:
 
 ```bash
+./fuzix.sh run ls /bin
+./fuzix.sh run /bin/hello arg1 arg2
 ./fuzix.sh test hello.c arg1 arg2
 ```
 
@@ -55,7 +60,7 @@ By default, all generated files are stored in `.fuzix-sh`:
     └── <arch>
 ```
 
-`hd-fuzix.dsk` is a single mutable root disk. Every `image` writes the current program into the same disk image.
+`hd-fuzix.dsk` is a single mutable root disk. Every `cp` copies the requested file into the same disk image.
 
 ## Development
 
