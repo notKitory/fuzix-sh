@@ -63,6 +63,7 @@ jobs:
           sudo rm -rf /opt/fcc
           sudo mkdir -p /opt/fcc
           sudo chown "$USER:$USER" /opt/fcc
+          export PATH="/opt/fcc/bin:$PATH"
 
           git clone --depth 1 "$FUZIX_BINTOOLS_REPO" "$root/src/Fuzix-Bintools"
           make -C "$root/src/Fuzix-Bintools" install
