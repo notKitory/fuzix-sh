@@ -25,9 +25,6 @@ jobs:
           - arch: darwin-arm64
             os: macos
             runner: macos-latest
-          - arch: darwin-x86_64
-            os: macos
-            runner: macos-13
 
     env:
       FUZIX_REF: v0.4
@@ -69,6 +66,18 @@ jobs:
         run: |
           brew install byacc bison flex gputils make pkg-config || true
 
+      - name: Configure environment PATH
+        run: |
+          echo "/opt/fcc/bin" >> $GITHUB_PATH
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
+            echo "/opt/homebrew/opt/bison/bin" >> $GITHUB_PATH
+            echo "/opt/homebrew/opt/flex/bin" >> $GITHUB_PATH
+            echo "/usr/local/opt/make/libexec/gnubin" >> $GITHUB_PATH
+            echo "/usr/local/opt/bison/bin" >> $GITHUB_PATH
+            echo "/usr/local/opt/flex/bin" >> $GITHUB_PATH
+          fi
+
       - name: Build toolchain
         run: |
           set -eux
@@ -77,12 +86,15 @@ jobs:
           sudo rm -rf /opt/fcc
           sudo mkdir -p /opt/fcc
           sudo chown -R "$USER" /opt/fcc
-          export PATH="/opt/fcc/bin:$PATH"
+          export PATH="/opt/homebrew/opt/make/libexec/gnubin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/fcc/bin:$PATH"
 
           git clone --depth 1 "$FUZIX_BINTOOLS_REPO" "$root/src/Fuzix-Bintools"
           make -C "$root/src/Fuzix-Bintools" install
 
           git clone --depth 1 "$FUZIX_FCC_REPO" "$root/src/Fuzix-Compiler-Kit"
+          if [ "$(uname -s)" = "Darwin" ]; then
+            find "$root/src/Fuzix-Compiler-Kit" -name Makefile -exec sed -i.bak 's/-lbsd//g' {} +
+          fi
           make -C "$root/src/Fuzix-Compiler-Kit" bootstuff
           make -C "$root/src/Fuzix-Compiler-Kit" install
           ln -sf fcc /opt/fcc/bin/cc85
