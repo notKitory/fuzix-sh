@@ -2,10 +2,12 @@ use crate::config::FuzixConfig;
 use crate::toolchain::ToolchainManager;
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
+use flate2::read::GzDecoder;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use tar::Archive;
 
 pub struct DiskManager<'a> {
     pub config: &'a FuzixConfig,
@@ -38,14 +40,91 @@ impl<'a> DiskManager<'a> {
         }
 
         let runtime = self.toolchain.runtime_dir();
-        let src_boot = runtime.join("images").join("boot.dsk");
-        let src_hd = runtime.join("images").join("hd-fuzix.dsk");
+        let emu = &self.config.target.emulator;
+        let cpu = &self.config.target.cpu;
 
-        if !boot.exists() && src_boot.exists() {
-            fs::copy(&src_boot, &boot)?;
-        }
-        if !root.exists() && src_hd.exists() {
-            fs::copy(&src_hd, &root)?;
+        if emu == "68knano" {
+            let nano_disk = runtime.join("images").join("68knano-disk.img");
+            let nano_rom = self.toolchain.emulators_dir().join("68knano.rom");
+
+            if nano_disk.exists() {
+                if !root.exists() {
+                    fs::copy(&nano_disk, &root)?;
+                }
+            } else if !root.exists() {
+                println!(
+                    "{} Downloading official FUZIX 0.4 (68knano) disk image...",
+                    "==>".cyan().bold()
+                );
+                if let Ok(resp) = ureq::get("https://fuzix.org/downloads/0.4/68knano/emu-ide.img").call() {
+                    if let Ok(mut outfile) = fs::File::create(&root) {
+                        let mut reader = resp.into_reader();
+                        let _ = std::io::copy(&mut reader, &mut outfile);
+                    }
+                }
+            }
+
+            if !nano_rom.exists() {
+                println!(
+                    "{} Downloading official FUZIX 0.4 (68knano) ROM...",
+                    "==>".cyan().bold()
+                );
+                if let Some(p) = nano_rom.parent() {
+                    let _ = fs::create_dir_all(p);
+                }
+                if let Ok(resp) = ureq::get("https://fuzix.org/downloads/0.4/68knano/fuzix.rom").call() {
+                    if let Ok(mut outfile) = fs::File::create(&nano_rom) {
+                        let mut reader = resp.into_reader();
+                        let _ = std::io::copy(&mut reader, &mut outfile);
+                    }
+                }
+            }
+        } else if emu == "v68" || emu == "tiny68k" || cpu == "68000" {
+            let v68_img = runtime.join("images").join("v68-disk.img");
+            if v68_img.exists() {
+                if !root.exists() {
+                    fs::copy(&v68_img, &root)?;
+                }
+            } else if !root.exists() {
+                println!(
+                    "{} Downloading official FUZIX 68000 disk image...",
+                    "==>".cyan().bold()
+                );
+                if let Ok(resp) = ureq::get("https://fuzix.org/downloads/v68.tar.gz").call() {
+                    let tar = GzDecoder::new(resp.into_reader());
+                    let mut archive = Archive::new(tar);
+                    if let Ok(entries) = archive.entries() {
+                        for mut entry in entries.flatten() {
+                            if let Ok(path) = entry.path() {
+                                let p_str = path.to_string_lossy();
+                                if p_str.ends_with("disk.img") || p_str.ends_with("drive.ide") || p_str.ends_with("fuzix.dsk") {
+                                    if let Ok(mut outfile) = fs::File::create(&root) {
+                                        let _ = std::io::copy(&mut entry, &mut outfile);
+                                    }
+                                } else if p_str.ends_with("boot.dat") {
+                                    let boot_dat = self.toolchain.emulators_dir().join("boot.dat");
+                                    if let Some(p) = boot_dat.parent() {
+                                        let _ = fs::create_dir_all(p);
+                                    }
+                                    if let Ok(mut outfile) = fs::File::create(&boot_dat) {
+                                        let _ = std::io::copy(&mut entry, &mut outfile);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            let src_boot = runtime.join("images").join("boot.dsk");
+            let src_hd = runtime.join("images").join("hd-fuzix.dsk");
+
+            if !boot.exists() && src_boot.exists() {
+                fs::copy(&src_boot, &boot)?;
+            }
+            if !root.exists() && src_hd.exists() {
+                fs::copy(&src_hd, &root)?;
+            }
         }
 
         Ok(())

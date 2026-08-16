@@ -63,7 +63,7 @@ fn default_cpu() -> String {
 }
 
 fn default_emulator() -> String {
-    "v68".to_string()
+    "68knano".to_string()
 }
 
 fn default_timeout() -> u64 {

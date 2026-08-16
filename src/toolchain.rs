@@ -82,6 +82,10 @@ impl ToolchainManager {
                 format!("emulatorkit-runtime-{}.tar.gz", self.arch),
                 self.emulators_dir(),
             ),
+            (
+                format!("z80pack-runtime-{}.tar.gz", self.arch),
+                self.emulators_dir(),
+            ),
         ];
 
         for (asset_name, dest_dir) in assets {
@@ -111,6 +115,12 @@ impl ToolchainManager {
             }
         }
 
+        // Ensure boot.dat is present for v68
+        let boot_dat = self.emulators_dir().join("boot.dat");
+        if !boot_dat.exists() {
+            self.ensure_boot_dat(&boot_dat);
+        }
+
         fs::write(&marker, self.release.as_bytes())
             .context("Failed to write toolchain completion marker")?;
 
@@ -120,6 +130,46 @@ impl ToolchainManager {
         );
 
         Ok(())
+    }
+
+    fn ensure_boot_dat(&self, dest: &Path) {
+        // Try direct download of boot.dat
+        let direct_url = format!(
+            "https://github.com/{}/releases/download/{}/boot.dat",
+            self.repo,
+            if self.release == "latest" { "prebuilt-latest" } else { &self.release }
+        );
+        if let Ok(resp) = ureq::get(&direct_url).call() {
+            let mut buf = Vec::new();
+            if resp.into_reader().read_to_end(&mut buf).is_ok() && buf.len() >= 4096 {
+                let _ = fs::write(dest, buf);
+                return;
+            }
+        }
+
+        // Try extracting boot.dat from linux-amd64 runtime package
+        let linux_tar_url = format!(
+            "https://github.com/{}/releases/download/{}/emulatorkit-runtime-linux-amd64.tar.gz",
+            self.repo,
+            if self.release == "latest" { "prebuilt-latest" } else { &self.release }
+        );
+        if let Ok(resp) = ureq::get(&linux_tar_url).call() {
+            let mut buf = Vec::new();
+            if resp.into_reader().read_to_end(&mut buf).is_ok() {
+                let tar = GzDecoder::new(&buf[..]);
+                let mut archive = Archive::new(tar);
+                if let Ok(entries) = archive.entries() {
+                    for mut entry in entries.flatten() {
+                        if let Ok(path) = entry.path() {
+                            if path.ends_with("boot.dat") {
+                                let _ = entry.unpack(dest);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn download_and_extract(&self, asset_name: &str, dest_dir: &Path) -> Result<()> {

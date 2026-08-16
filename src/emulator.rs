@@ -7,7 +7,7 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::fs;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,10 +28,31 @@ impl<'a> EmulatorRunner<'a> {
         fs::create_dir_all(&work_dir)?;
 
         self.disk.ensure_images()?;
-        let boot = fs::canonicalize(self.disk.boot_image_path())?;
-        let root = fs::canonicalize(self.disk.root_image_path())?;
+        let root = if self.disk.root_image_path().exists() {
+            fs::canonicalize(self.disk.root_image_path())?
+        } else {
+            self.disk.root_image_path()
+        };
+        let boot = if self.disk.boot_image_path().exists() {
+            fs::canonicalize(self.disk.boot_image_path()).unwrap_or_else(|_| self.disk.boot_image_path())
+        } else {
+            self.disk.boot_image_path()
+        };
 
-        if emulator == "v68" {
+        if emulator == "68knano" {
+            let emu_dir = self.toolchain.emulators_dir();
+            let rom_path = emu_dir.join("68knano.rom");
+            if rom_path.exists() {
+                let _ = fs::copy(&rom_path, work_dir.join("68knano.rom"));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::symlink;
+                let ide_path = work_dir.join("68knano.ide");
+                let _ = fs::remove_file(&ide_path);
+                let _ = symlink(&root, &ide_path);
+            }
+        } else if emulator == "v68" || emulator == "tiny68k" {
             let emu_dir = self.toolchain.emulators_dir();
             let boot_dat = emu_dir.join("boot.dat");
             if boot_dat.exists() {
@@ -40,9 +61,12 @@ impl<'a> EmulatorRunner<'a> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::symlink;
-                let ide_path = work_dir.join("drive.ide");
-                let _ = fs::remove_file(&ide_path);
-                let _ = symlink(&root, &ide_path);
+                let disk_img = work_dir.join("disk.img");
+                let drive_ide = work_dir.join("drive.ide");
+                let _ = fs::remove_file(&disk_img);
+                let _ = fs::remove_file(&drive_ide);
+                let _ = symlink(&root, &disk_img);
+                let _ = symlink(&root, &drive_ide);
             }
         } else if emulator == "cpmsim" {
             let disks_dir = work_dir.join("disks");
@@ -58,6 +82,33 @@ impl<'a> EmulatorRunner<'a> {
         }
 
         Ok(work_dir)
+    }
+
+    fn build_command(&self, emulator: &str, work_dir: &Path) -> CommandBuilder {
+        let emu_bin = self.toolchain.emulator_binary(emulator);
+        let mut cmd = CommandBuilder::new(&emu_bin);
+        cmd.cwd(work_dir);
+
+        if emulator == "68knano" {
+            cmd.arg("-f");
+            if let Some(c) = self.config.target.cpu.strip_prefix("680") {
+                match c {
+                    "10" => { cmd.arg("-1"); }
+                    "20" => { cmd.arg("-2"); }
+                    _ => { cmd.arg("-0"); }
+                }
+            }
+            if work_dir.join("68knano.rom").exists() {
+                cmd.arg("-r");
+                cmd.arg("68knano.rom");
+            }
+            if work_dir.join("68knano.ide").exists() {
+                cmd.arg("-i");
+                cmd.arg("68knano.ide");
+            }
+        }
+
+        cmd
     }
 
     /// Run an interactive shell in the emulator.
@@ -86,8 +137,7 @@ impl<'a> EmulatorRunner<'a> {
             pixel_height: 0,
         })?;
 
-        let mut cmd = CommandBuilder::new(&emu_bin);
-        cmd.cwd(&work_dir);
+        let cmd = self.build_command(emu_name, &work_dir);
 
         let mut child = pair.slave.spawn_command(cmd)?;
         drop(pair.slave);
@@ -180,8 +230,7 @@ impl<'a> EmulatorRunner<'a> {
             pixel_height: 0,
         })?;
 
-        let mut cmd = CommandBuilder::new(&emu_bin);
-        cmd.cwd(&work_dir);
+        let cmd = self.build_command(emu_name, &work_dir);
 
         let mut child = pair.slave.spawn_command(cmd)?;
         drop(pair.slave);

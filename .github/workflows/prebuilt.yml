@@ -118,6 +118,16 @@ jobs:
           curl -fL --retry 3 -o "$root/downloads/z80pack/boot.dsk" "$FUZIX_IMAGE_BASE/boot.dsk"
           curl -fL --retry 3 -o "$root/downloads/z80pack/hd-fuzix.dsk" "$FUZIX_IMAGE_BASE/hd-fuzix.dsk"
 
+          mkdir -p "$root/downloads/v68"
+          curl -fL --retry 3 -o "$root/downloads/v68/v68.tar.gz" "https://fuzix.org/downloads/v68.tar.gz" || true
+          if [ -f "$root/downloads/v68/v68.tar.gz" ]; then
+            tar -C "$root/downloads/v68" -xzf "$root/downloads/v68/v68.tar.gz" || true
+          fi
+
+          mkdir -p "$root/downloads/68knano"
+          curl -fL --retry 3 -o "$root/downloads/68knano/disk.img" "https://fuzix.org/downloads/0.4/68knano/emu-ide.img" || true
+          curl -fL --retry 3 -o "$root/downloads/68knano/fuzix.rom" "https://fuzix.org/downloads/0.4/68knano/fuzix.rom" || true
+
           make -C "$root/src/FUZIX/Standalone" ucp
           make -C "$root/src/FUZIX/Library" tools/binman85 tools/liberror tools/syscall_8080
           make -C "$root/src/FUZIX/Library/libs" -f Makefile.8080
@@ -151,7 +161,7 @@ jobs:
           fi
 
           git clone --depth 1 https://codeberg.org/EtchedPixels/EmulatorKit.git "$root/src/EmulatorKit"
-          make -C "$root/src/EmulatorKit" tiny68k || true
+          make -C "$root/src/EmulatorKit" 68knano tiny68k || true
 
       - name: Package release assets
         run: |
@@ -182,6 +192,24 @@ jobs:
           cp "$root/downloads/z80pack/boot.dsk" "$pkg/fuzix/images/boot.dsk"
           cp "$root/downloads/z80pack/hd-fuzix.dsk" "$pkg/fuzix/images/hd-fuzix.dsk"
 
+          for img in "$root/downloads/v68/disk.img" "$root/downloads/v68/fuzix.dsk" "$root/downloads/v68/drive.ide"; do
+            if [ -f "$img" ]; then
+              cp "$img" "$pkg/fuzix/images/v68-disk.img"
+              break
+            fi
+          done
+
+          if [ -f "$root/downloads/v68/boot.dat" ]; then
+            cp "$root/downloads/v68/boot.dat" "$pkg/emulatorkit/boot.dat"
+          fi
+
+          if [ -f "$root/downloads/68knano/disk.img" ]; then
+            cp "$root/downloads/68knano/disk.img" "$pkg/fuzix/images/68knano-disk.img"
+          fi
+          if [ -f "$root/downloads/68knano/fuzix.rom" ]; then
+            cp "$root/downloads/68knano/fuzix.rom" "$pkg/emulatorkit/68knano.rom"
+          fi
+
           cp "$root/src/z80pack/cpmsim/cpmsim" "$pkg/z80pack/cpmsim"
           cp -a "$root/src/z80pack/cpmsim/conf/." "$pkg/z80pack/conf/"
           for tool in cpmrecv cpmsend ptp2bin mkdskimg bin2hex cpmr.sh cpmw.sh; do
@@ -195,6 +223,9 @@ jobs:
           fi
           if [ -f "$root/src/Virtual68/boot.dat" ]; then
             cp "$root/src/Virtual68/boot.dat" "$pkg/emulatorkit/boot.dat"
+          fi
+          if [ -x "$root/src/EmulatorKit/68knano" ]; then
+            cp "$root/src/EmulatorKit/68knano" "$pkg/emulatorkit/68knano"
           fi
           if [ -x "$root/src/EmulatorKit/tiny68k" ]; then
             cp "$root/src/EmulatorKit/tiny68k" "$pkg/emulatorkit/tiny68k"
