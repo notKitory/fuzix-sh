@@ -64,20 +64,29 @@ jobs:
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install byacc bison flex gputils make pkg-config binutils || true
+          brew install byacc bison flex gputils make pkg-config || true
 
       - name: Configure environment PATH
         run: |
+          sudo mkdir -p /opt/fcc/bin
+          sudo chown -R "$USER" /opt/fcc
           echo "/opt/fcc/bin" >> $GITHUB_PATH
           if [ "${{ runner.os }}" = "macOS" ]; then
-            echo "/opt/homebrew/opt/binutils/bin" >> $GITHUB_PATH
             echo "/opt/homebrew/opt/make/libexec/gnubin" >> $GITHUB_PATH
             echo "/opt/homebrew/opt/bison/bin" >> $GITHUB_PATH
             echo "/opt/homebrew/opt/flex/bin" >> $GITHUB_PATH
-            echo "/usr/local/opt/binutils/bin" >> $GITHUB_PATH
             echo "/usr/local/opt/make/libexec/gnubin" >> $GITHUB_PATH
             echo "/usr/local/opt/bison/bin" >> $GITHUB_PATH
             echo "/usr/local/opt/flex/bin" >> $GITHUB_PATH
+
+            cat << 'EOF' > /opt/fcc/bin/ar
+#!/bin/sh
+if [ $# -le 2 ] && { [ "$1" = "cq" ] || [ "$1" = "cr" ] || [ "$1" = "r" ] || [ "$1" = "q" ]; }; then
+    exit 0
+fi
+exec /usr/bin/ar "$@"
+EOF
+            chmod +x /opt/fcc/bin/ar
           fi
 
       - name: Build toolchain
@@ -85,10 +94,8 @@ jobs:
           set -eux
           root="$PWD/work"
           mkdir -p "$root/src"
-          sudo rm -rf /opt/fcc
           sudo mkdir -p /opt/fcc
           sudo chown -R "$USER" /opt/fcc
-          export PATH="/opt/homebrew/opt/binutils/bin:/opt/homebrew/opt/make/libexec/gnubin:/opt/homebrew/opt/bison/bin:/opt/homebrew/opt/flex/bin:/opt/fcc/bin:$PATH"
 
           git clone --depth 1 "$FUZIX_BINTOOLS_REPO" "$root/src/Fuzix-Bintools"
           make -C "$root/src/Fuzix-Bintools" install
