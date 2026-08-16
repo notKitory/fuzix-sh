@@ -1,72 +1,107 @@
-# fuzix-sh
+# fuzix (CLI)
 
 [English](./README.md) | [Русский](./README_RU.md)
 
-`fuzix-sh` — небольшая shell-обертка для компиляции и запуска программ на C для FUZIX через z80pack.
+`fuzix` — современная нативная консольная утилита и SDK для разработки, компиляции и тестирования приложений под операционную систему **FUZIX OS**.
 
-## Требования
+🚀 **100% Native & No Docker:** Работает напрямую на хосте (macOS Apple Silicon / Intel, Linux, Windows) без необходимости запускать Docker.  
+🎮 **Вся мощь EmulatorKit:** Поддержка десятков плат и процессоров (Motorola 68000, Z80, Z180, 6809, 6502, 8080/8085 и др.).  
+⚡ **Мгновенная скорость:** Нативный тулчейн компиляции и PTY-автоматизация эмуляторов.
 
-- Docker
-- `curl`
-- `tar`
+---
 
-## Использование
+## 📦 Установка
 
-Для использования достаточно скачать только [`fuzix.sh`](https://raw.githubusercontent.com/notKitory/fuzix-sh/main/fuzix.sh).
-
+### Из исходников (Cargo)
 ```bash
-./fuzix.sh compile <source.c>
-./fuzix.sh cp <host-path> <fuzix-path>
-./fuzix.sh make [target...]
-./fuzix.sh make-test [-v] [arg...]
-./fuzix.sh run [-v] <command> [arg...]
-./fuzix.sh shell
-./fuzix.sh test [-v] <source.c> [arg...]
+cargo build --release
+# Бинарник появится в target/release/fuzix
 ```
 
-При первом запуске скрипт скачает бинарники в `.fuzix-sh/prebuilt/<arch>` и соберет Docker runtime image. Следующие запуски переиспользуют этот runtime.
+---
 
-## Команды
+## 🛠 Быстрый старт
+
+### 1. Создание нового проекта
+```bash
+fuzix init --name my-app --cpu 68000 --emulator v68
+```
+Команда создаст файл конфигурации `fuzix.toml` и шаблонный исходник `hello.c`.
+
+### 2. Сборка C-программы
+```bash
+fuzix build hello.c
+```
+
+### 3. Автоматизированное тестирование (Сборка + Инжект + Запуск)
+```bash
+fuzix test hello.c arg1 arg2
+```
+
+### 4. Интерактивная консоль (FUZIX Shell)
+```bash
+fuzix shell
+```
+*Нажмите `Ctrl-]` или введите `shutdown` для завершения работы эмулятора.*
+
+---
+
+## 📋 Список команд
 
 | Команда | Описание |
 | --- | --- |
-| `compile <source.c>` | Компилирует C-файл в `.fuzix-sh/bin/<source-name>`. |
-| `cp <host-path> <fuzix-path>` | Копирует локальный файл в FUZIX root-диск по пути `<fuzix-path>`. |
-| `make [target...]` | Запускает `make` в окружении FUZIX toolchain. |
-| `make-test [-v] [arg...]` | Запускает `make`, копирует первый target из Makefile в `/bin/<имя-target>` и запускает его в FUZIX. |
-| `run [-v] <command> [arg...]` | Загружает FUZIX в z80pack, выполняет команду в FUZIX shell, печатает вывод команды и выключает эмулятор. |
-| `shell` | Открывает интерактивный FUZIX shell. |
-| `test [-v] <source.c> [arg...]` | Последовательно выполняет `compile`, `cp` и `run`. |
+| `fuzix init` | Инициализирует новый FUZIX-проект и создает `fuzix.toml`. |
+| `fuzix build [source.c]` | Компилирует C-файл или запускает `make` в нативном FUZIX тулчейне. |
+| `fuzix test [source.c]` | Автоматически собирает C-файл, копирует его на диск и выполняет тест. |
+| `fuzix run <cmd> [args...]` | Запускает команду внутри эмулятора FUZIX и возвращает вывод. |
+| `fuzix shell` | Открывает интерактивную сессию терминала с эмулятором через PTY. |
+| `fuzix disk cp <host> <fuzix>` | Записывает локальный файл на образ диска FUZIX (через `ucp`). |
+| `fuzix disk ls [path]` | Просматривает файлы на диске FUZIX (по умолчанию `/bin`). |
+| `fuzix emulators` | Выводит список поддерживаемых эмуляторов и плат из EmulatorKit. |
 
-Используйте `-v`, чтобы видеть вывод эмулятора, а не только вывод программы.
-`Ctrl-]` принудительно выключает эмулятор в `run` и `shell`.
+---
 
-Аргументы команды передаются сразу после команды:
+## ⚙️ Конфигурация (`fuzix.toml`)
 
-```bash
-./fuzix.sh run ls /bin
-./fuzix.sh run /bin/hello arg1 arg2
-./fuzix.sh test hello.c arg1 arg2
-./fuzix.sh make-test arg1 arg2
+Все настройки проекта хранятся в файле `fuzix.toml` в корне:
+
+```toml
+[project]
+name = "my-app"
+version = "0.1.0"
+source = "hello.c"
+
+[target]
+cpu = "68000"          # 68000, z80, 8080, 6809, 6502
+emulator = "v68"        # v68, tiny68k, rc2014, cpmsim, swt6809, rcbus-6502
+timeout = 45
+
+[disk]
+boot_image = ".fuzix/images/boot.dsk"
+root_image = ".fuzix/images/hd-fuzix.dsk"
+
+[toolchain]
+repo = "notKitory/fuzix-sh"
+release = "latest"
 ```
 
-## State-директория
+---
 
-По умолчанию все сгенерированные файлы лежат в `.fuzix-sh`:
+## 🕹 Поддерживаемые эмуляторы (EmulatorKit & Virtual68)
 
-```text
-.fuzix-sh
-├── bin
-├── build
-├── images
-│   ├── boot.dsk
-│   └── hd-fuzix.dsk
-└── prebuilt
-    └── <arch>
-```
+Просмотреть все доступные системы можно командой `fuzix emulators`:
 
-`hd-fuzix.dsk` — единый mutable root-диск. Каждый `cp` копирует указанный файл в один и тот же disk image.
+*   **`v68`** — Motorola 68000 с поддержкой IDE дисков и программного MMU *(Рекомендуется для 68k)*.
+*   **`tiny68k`** / **`mini68k`** — одноплатные компьютеры на 68000.
+*   **`rc2014`** / **`rcbus-z80`** — модульные компьютеры на Z80.
+*   **`rcbus-z180`** — высокоскоростная система на Z180.
+*   **`cpmsim`** — эмулятор 8080 / Z80 (z80pack).
+*   **`swt6809`** — система на Motorola 6809.
+*   **`rcbus-6502`** — система на MOS 6502.
+*   **`altair8080`** — легендарный MITS Altair 8800.
 
-## Разработка
+---
 
-Если у вас есть идеи, предложения или исправления, буду благодарен любым [issue](https://github.com/notKitory/fuzix-sh/issues) или [pull request](https://github.com/notKitory/fuzix-sh/pulls).
+## 🤝 Разработка
+
+Будем рады вашим предложениям и Pull Request'ам в [GitHub репозитории](https://github.com/notKitory/fuzix-sh)!

@@ -3,7 +3,7 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STATE_DIR=${FUZIX_SH_DIR:-"$ROOT_DIR/.fuzix-sh"}
-FUZIX_CPU=${FUZIX_CPU:-8080}
+FUZIX_CPU=${FUZIX_CPU:-68000}
 TIMEOUT=${FUZIX_TIMEOUT:-45}
 FUZIX_REBUILD_DOCKER=${FUZIX_REBUILD_DOCKER:-0}
 FUZIX_PREBUILT_REPO=${FUZIX_PREBUILT_REPO:-notKitory/fuzix-sh}
@@ -60,7 +60,7 @@ Usage:
 
 Environment:
   FUZIX_SH_DIR    state dir, default: ./.fuzix-sh
-  FUZIX_CPU               compiler CPU, default: 8080
+  FUZIX_CPU               compiler CPU (68000 or 8080), default: 68000
   FUZIX_DOCKER_IMAGE      runtime Docker image name
   FUZIX_REBUILD_DOCKER=1  force Docker image rebuild
   FUZIX_TIMEOUT           emulator check timeout, default: 45 seconds
@@ -97,24 +97,30 @@ validate_prebuilt() {
     missing=0
     for path in \
         "$dir/opt-fcc/bin/fcc" \
-        "$dir/opt-fcc/bin/asz80" \
-        "$dir/opt-fcc/bin/ldz80" \
         "$dir/fuzix/include/stdio.h" \
-        "$dir/fuzix/include/$FUZIX_CPU" \
-        "$dir/fuzix/libs/crt0_${FUZIX_CPU}.o" \
-        "$dir/fuzix/libs/libc${FUZIX_CPU}.a" \
         "$dir/fuzix/tools/binman85" \
         "$dir/fuzix/ucp" \
         "$dir/fuzix/images/boot.dsk" \
-        "$dir/fuzix/images/hd-fuzix.dsk" \
-        "$dir/z80pack/cpmsim/cpmsim" \
-        "$dir/z80pack/cpmsim/srctools"
+        "$dir/fuzix/images/hd-fuzix.dsk"
     do
         if [ ! -e "$path" ]; then
             echo "Missing prebuilt file: $path" >&2
             missing=1
         fi
     done
+
+    if [ "$FUZIX_CPU" = "68000" ] || [ "$FUZIX_CPU" = "m68k" ]; then
+        if [ ! -e "$dir/emulatorkit/emulatorkit/v68" ]; then
+            echo "Missing Virtual68 emulator: $dir/emulatorkit/emulatorkit/v68" >&2
+            missing=1
+        fi
+    else
+        if [ ! -e "$dir/z80pack/cpmsim/cpmsim" ]; then
+            echo "Missing z80pack emulator: $dir/z80pack/cpmsim/cpmsim" >&2
+            missing=1
+        fi
+    fi
+
     [ "$missing" = 0 ]
 }
 
@@ -134,7 +140,8 @@ ensure_prebuilt() {
     for asset in \
         "fuzix-toolchain-$PREBUILT_ARCH.tar.gz" \
         "fuzix-runtime-$PREBUILT_ARCH.tar.gz" \
-        "z80pack-runtime-$PREBUILT_ARCH.tar.gz"
+        "z80pack-runtime-$PREBUILT_ARCH.tar.gz" \
+        "emulatorkit-runtime-$PREBUILT_ARCH.tar.gz"
     do
         url=$(release_asset_url "$asset")
         archive="$tmp/$asset"
@@ -443,7 +450,6 @@ inside_run() {
     prebuilt=$(inside_prebuilt_dir)
     boot="$STATE_DIR/images/boot.dsk"
     hd="$STATE_DIR/images/hd-fuzix.dsk"
-    z80="$prebuilt/z80pack/cpmsim"
     run_line="$command"
 
     validate_fuzix_token "$command"
@@ -462,12 +468,25 @@ inside_run() {
         echo "Root image not found." >&2
         exit 1
     }
-    [ -x "$z80/cpmsim" ] || {
-        echo "cpmsim not found in prebuilt runtime: $z80/cpmsim" >&2
-        exit 1
-    }
 
-    inside_link_disks "$z80" "$boot" "$hd"
+    use_v68=0
+    if [ "$FUZIX_CPU" = "68000" ] || [ "$FUZIX_CPU" = "m68k" ]; then
+        use_v68=1
+        emu_dir="$prebuilt/emulatorkit/emulatorkit"
+        emu_bin="$emu_dir/v68"
+        [ -x "$emu_bin" ] || {
+            echo "v68 emulator not found: $emu_bin" >&2
+            exit 1
+        }
+    else
+        emu_dir="$prebuilt/z80pack/cpmsim"
+        emu_bin="$emu_dir/cpmsim"
+        [ -x "$emu_bin" ] || {
+            echo "cpmsim not found: $emu_bin" >&2
+            exit 1
+        }
+        inside_link_disks "$emu_dir" "$boot" "$hd"
+    fi
 
     run_name=$(basename -- "$command")
     expect_file="$STATE_DIR/run-$run_name.expect"
@@ -476,8 +495,7 @@ inside_run() {
 set timeout $TIMEOUT
 log_user $verbose
 log_file -a -noappend "$log_file"
-cd "$z80"
-set env(PATH) "$z80/srctools:\$env(PATH)"
+cd "$emu_dir"
 proc finish_emulator {status} {
     global emulator_spawn_id
     catch {send -i \$emulator_spawn_id "\034"}
@@ -485,19 +503,22 @@ proc finish_emulator {status} {
     catch {wait -i \$emulator_spawn_id}
     exit \$status
 }
-proc shutdown_then_finish {status} {
-    global emulator_spawn_id user_spawn_id
-    catch {send -i \$emulator_spawn_id "shutdown\r"}
-    set old_timeout \$::timeout
-    set timeout 10
-    expect {
-        -i \$user_spawn_id "\035" { finish_emulator 130 }
-        -i \$emulator_spawn_id -re {halt|Halted|System halted} { }
-        timeout { }
-    }
-    set timeout \$old_timeout
-    finish_emulator \$status
+EOF
+
+    if [ "$use_v68" = 1 ]; then
+        cat >>"$expect_file" <<EOF
+spawn ./v68
+set emulator_spawn_id \$spawn_id
+expect {
+    -i \$user_spawn_id "\035" { finish_emulator 130 }
+    -i \$emulator_spawn_id -re {boot:|Boot>} { send -i \$emulator_spawn_id "b\r" }
+    -i \$emulator_spawn_id -re {login:} { send -i \$emulator_spawn_id "root\r" }
+    timeout { exp_continue }
 }
+EOF
+    else
+        cat >>"$expect_file" <<EOF
+set env(PATH) "$emu_dir/srctools:\$env(PATH)"
 spawn ./cpmsim
 set emulator_spawn_id \$spawn_id
 expect {
@@ -505,10 +526,15 @@ expect {
     -i \$emulator_spawn_id -re {bootdev:} { send -i \$emulator_spawn_id "0\r" }
     timeout { puts "timeout waiting for bootdev"; finish_emulator 2 }
 }
+EOF
+    fi
+
+    cat >>"$expect_file" <<EOF
 expect {
     -i \$user_spawn_id "\035" { finish_emulator 130 }
     -i \$emulator_spawn_id -re {Continue\?} { send -i \$emulator_spawn_id "no\r"; exp_continue }
     -i \$emulator_spawn_id -re {login:} { send -i \$emulator_spawn_id "root\r" }
+    -i \$emulator_spawn_id -re {[\$#] } { }
     timeout { puts "timeout waiting for login"; finish_emulator 2 }
 }
 expect {
@@ -567,21 +593,32 @@ inside_shell() {
     prebuilt=$(inside_prebuilt_dir)
     boot="$STATE_DIR/images/boot.dsk"
     hd="$STATE_DIR/images/hd-fuzix.dsk"
-    z80="$prebuilt/z80pack/cpmsim"
 
     inside_ensure_images
-    [ -x "$z80/cpmsim" ] || {
-        echo "cpmsim not found in prebuilt runtime: $z80/cpmsim" >&2
-        exit 1
-    }
 
-    inside_link_disks "$z80" "$boot" "$hd"
+    if [ "$FUZIX_CPU" = "68000" ] || [ "$FUZIX_CPU" = "m68k" ]; then
+        emu_dir="$prebuilt/emulatorkit/emulatorkit"
+        emu_bin="$emu_dir/v68"
+        [ -x "$emu_bin" ] || {
+            echo "v68 emulator not found: $emu_bin" >&2
+            exit 1
+        }
+        spawn_cmd="./v68"
+    else
+        emu_dir="$prebuilt/z80pack/cpmsim"
+        emu_bin="$emu_dir/cpmsim"
+        [ -x "$emu_bin" ] || {
+            echo "cpmsim not found: $emu_bin" >&2
+            exit 1
+        }
+        inside_link_disks "$emu_dir" "$boot" "$hd"
+        spawn_cmd="./cpmsim"
+    fi
 
     expect_file="$STATE_DIR/shell.expect"
     cat >"$expect_file" <<EOF
 set timeout 60
-cd "$z80"
-set env(PATH) "$z80/srctools:\$env(PATH)"
+cd "$emu_dir"
 set key_interrupt "\034"
 set key_shutdown "\035"
 set key_backspace "\010"
@@ -602,21 +639,30 @@ trap {
 trap {
     finish_emulator 143
 } SIGTERM
-spawn ./cpmsim
+spawn $spawn_cmd
+EOF
+
+    if [ "$FUZIX_CPU" = "8080" ] || [ "$FUZIX_CPU" = "z80" ]; then
+        cat >>"$expect_file" <<EOF
+set env(PATH) "$emu_dir/srctools:\$env(PATH)"
 expect {
     -re {bootdev:} { send "0\r" }
     timeout { puts "timeout waiting for bootdev"; exit 2 }
 }
-interact \
+EOF
+    fi
+
+    cat >>"$expect_file" <<EOF
+interact \\
     \$key_delete {
         send "\010"
-    } \
+    } \\
     \$key_backspace {
         send "\010"
-    } \
+    } \\
     -o -re {Halted\.|System halted|halt:} {
         finish_emulator 0
-    } \
+    } \\
     \$key_shutdown {
         finish_emulator 0
     }

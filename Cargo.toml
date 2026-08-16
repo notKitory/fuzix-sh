@@ -1,0 +1,21 @@
+[package]
+name = "fuzix"
+version = "0.2.0"
+edition = "2021"
+authors = ["kitory"]
+description = "Modern native CLI tool and development SDK for FUZIX OS"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "cargo"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+ureq = { version = "2.10", features = ["tls"] }
+indicatif = "0.17"
+tar = "0.4"
+flate2 = "1.0"
+portable-pty = "0.8"
+crossterm = "0.28"
+anyhow = "1.0"
+colored = "2.1"
+regex = "1.10"
+dirs = "5.0"

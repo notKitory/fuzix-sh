@@ -17,9 +17,17 @@ jobs:
       matrix:
         include:
           - arch: linux-amd64
+            os: linux
             runner: ubuntu-24.04
           - arch: linux-arm64
+            os: linux
             runner: ubuntu-24.04-arm
+          - arch: darwin-arm64
+            os: macos
+            runner: macos-latest
+          - arch: darwin-x86_64
+            os: macos
+            runner: macos-13
 
     env:
       FUZIX_REF: v0.4
@@ -30,7 +38,8 @@ jobs:
       FUZIX_IMAGE_BASE: https://fuzix.org/downloads/0.4/z80pack
 
     steps:
-      - name: Install build dependencies
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -54,6 +63,11 @@ jobs:
             texinfo \
             zlib1g-dev
           sudo update-alternatives --set yacc /usr/bin/byacc || true
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install byacc bison flex gputils make pkg-config || true
 
       - name: Build toolchain
         run: |
@@ -109,6 +123,17 @@ jobs:
           fi
           make -C "$root/src/z80pack/cpmsim/srctools"
 
+      - name: Build EmulatorKit and Virtual68 runtime files
+        run: |
+          set -eux
+          root="$PWD/work"
+
+          git clone --depth 1 https://github.com/EtchedPixels/Virtual68.git "$root/src/Virtual68"
+          make -C "$root/src/Virtual68" v68
+
+          git clone --depth 1 https://codeberg.org/EtchedPixels/EmulatorKit.git "$root/src/EmulatorKit"
+          make -C "$root/src/EmulatorKit" tiny68k || true
+
       - name: Package release assets
         run: |
           set -eux
@@ -126,6 +151,7 @@ jobs:
             "$pkg/z80pack/z80pack/cpmsim/srctools" \
             "$pkg/z80pack/z80pack/cpmsim/conf" \
             "$pkg/z80pack/z80pack/cpmsim/disks" \
+            "$pkg/emulatorkit/emulatorkit" \
             "$dist"
 
           cp -a /opt/fcc/. "$pkg/toolchain/opt-fcc/"
@@ -145,6 +171,13 @@ jobs:
             fi
           done
 
+          if [ -x "$root/src/Virtual68/v68" ]; then
+            cp "$root/src/Virtual68/v68" "$pkg/emulatorkit/emulatorkit/v68"
+          fi
+          if [ -x "$root/src/EmulatorKit/tiny68k" ]; then
+            cp "$root/src/EmulatorKit/tiny68k" "$pkg/emulatorkit/emulatorkit/tiny68k"
+          fi
+
           test -x "$pkg/toolchain/opt-fcc/bin/fcc"
           test -x "$pkg/toolchain/opt-fcc/bin/asz80"
           test -x "$pkg/toolchain/opt-fcc/bin/ldz80"
@@ -158,10 +191,12 @@ jobs:
           test -s "$pkg/fuzix/fuzix/images/hd-fuzix.dsk"
           test -x "$pkg/z80pack/z80pack/cpmsim/cpmsim"
           test -d "$pkg/z80pack/z80pack/cpmsim/srctools"
+          test -x "$pkg/emulatorkit/emulatorkit/v68"
 
           tar -C "$pkg/toolchain" -czf "$dist/fuzix-toolchain-$arch.tar.gz" .
           tar -C "$pkg/fuzix" -czf "$dist/fuzix-runtime-$arch.tar.gz" .
           tar -C "$pkg/z80pack" -czf "$dist/z80pack-runtime-$arch.tar.gz" .
+          tar -C "$pkg/emulatorkit" -czf "$dist/emulatorkit-runtime-$arch.tar.gz" .
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
