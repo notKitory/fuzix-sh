@@ -49,6 +49,8 @@ jobs:
             flex \
             git \
             gputils \
+            gcc-m68k-linux-gnu \
+            binutils-m68k-linux-gnu \
             libboost-dev \
             libboost-program-options-dev \
             libbsd-dev \
