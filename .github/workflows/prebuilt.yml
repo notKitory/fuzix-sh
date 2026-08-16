@@ -78,14 +78,7 @@ jobs:
             echo "/usr/local/opt/make/libexec/gnubin" >> $GITHUB_PATH
             echo "/usr/local/opt/bison/bin" >> $GITHUB_PATH
             echo "/usr/local/opt/flex/bin" >> $GITHUB_PATH
-
-            cat << 'EOF' > /opt/fcc/bin/ar
-#!/bin/sh
-if [ $# -le 2 ] && { [ "$1" = "cq" ] || [ "$1" = "cr" ] || [ "$1" = "r" ] || [ "$1" = "q" ]; }; then
-    exit 0
-fi
-exec /usr/bin/ar "$@"
-EOF
+            printf '#!/bin/sh\nif [ "$#" -le 2 ]; then\n  case "$1" in\n    cq|cr|r|q) exit 0 ;;\n  esac\nfi\nexec /usr/bin/ar "$@"\n' > /opt/fcc/bin/ar
             chmod +x /opt/fcc/bin/ar
           fi
 
