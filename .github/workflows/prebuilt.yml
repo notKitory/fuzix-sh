@@ -143,7 +143,10 @@ jobs:
           root="$PWD/work"
 
           git clone --depth 1 https://github.com/EtchedPixels/Virtual68.git "$root/src/Virtual68"
-          make -C "$root/src/Virtual68" v68
+          make -C "$root/src/Virtual68"
+          if [ -x "$root/src/Virtual68/makeprom" ]; then
+            ( cd "$root/src/Virtual68" && ./makeprom )
+          fi
 
           git clone --depth 1 https://codeberg.org/EtchedPixels/EmulatorKit.git "$root/src/EmulatorKit"
           make -C "$root/src/EmulatorKit" tiny68k || true
@@ -187,6 +190,9 @@ jobs:
 
           if [ -x "$root/src/Virtual68/v68" ]; then
             cp "$root/src/Virtual68/v68" "$pkg/emulatorkit/v68"
+          fi
+          if [ -f "$root/src/Virtual68/boot.dat" ]; then
+            cp "$root/src/Virtual68/boot.dat" "$pkg/emulatorkit/boot.dat"
           fi
           if [ -x "$root/src/EmulatorKit/tiny68k" ]; then
             cp "$root/src/EmulatorKit/tiny68k" "$pkg/emulatorkit/tiny68k"

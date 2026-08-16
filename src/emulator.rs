@@ -31,7 +31,20 @@ impl<'a> EmulatorRunner<'a> {
         let boot = fs::canonicalize(self.disk.boot_image_path())?;
         let root = fs::canonicalize(self.disk.root_image_path())?;
 
-        if emulator == "cpmsim" {
+        if emulator == "v68" {
+            let emu_dir = self.toolchain.emulators_dir();
+            let boot_dat = emu_dir.join("boot.dat");
+            if boot_dat.exists() {
+                let _ = fs::copy(&boot_dat, work_dir.join("boot.dat"));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::symlink;
+                let ide_path = work_dir.join("drive.ide");
+                let _ = fs::remove_file(&ide_path);
+                let _ = symlink(&root, &ide_path);
+            }
+        } else if emulator == "cpmsim" {
             let disks_dir = work_dir.join("disks");
             fs::create_dir_all(&disks_dir)?;
             #[cfg(unix)]
