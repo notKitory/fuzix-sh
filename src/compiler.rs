@@ -37,7 +37,6 @@ impl<'a> Compiler<'a> {
 
         let fcc = self.toolchain.fcc_binary();
         let runtime = self.toolchain.runtime_dir();
-        let fuzix_root = runtime.join("fuzix");
         let cpu = &self.config.target.cpu;
 
         println!(
@@ -52,13 +51,13 @@ impl<'a> Compiler<'a> {
 
         // Step 1: Compile .c to .o
         let mut cmd = Command::new(&fcc);
-        cmd.env("FUZIX_ROOT", &fuzix_root)
+        cmd.env("FUZIX_ROOT", &runtime)
             .arg(format!("-m{}", cpu))
             .arg("-Os")
             .arg("-D__STDC__")
             .arg("-c")
-            .arg(format!("-I{}", fuzix_root.join("include").display()))
-            .arg(format!("-I{}", fuzix_root.join("include").join(cpu).display()))
+            .arg(format!("-I{}", runtime.join("include").display()))
+            .arg(format!("-I{}", runtime.join("include").join(cpu).display()))
             .arg(src_path)
             .arg("-o")
             .arg(&obj_file);
@@ -72,10 +71,10 @@ impl<'a> Compiler<'a> {
         }
 
         // Step 2: Link binary
-        let crt0 = fuzix_root.join("libs").join(format!("crt0_{}.o", cpu));
+        let crt0 = runtime.join("libs").join(format!("crt0_{}.o", cpu));
         let mut link_cmd = Command::new(&fcc);
         link_cmd
-            .env("FUZIX_ROOT", &fuzix_root)
+            .env("FUZIX_ROOT", &runtime)
             .arg("-s")
             .arg(format!("-m{}", cpu));
 
@@ -88,7 +87,7 @@ impl<'a> Compiler<'a> {
             .arg("-o")
             .arg(&b1_file)
             .arg("-M")
-            .arg(format!("-L{}", fuzix_root.join("libs").display()))
+            .arg(format!("-L{}", runtime.join("libs").display()))
             .arg(format!("-lc{}", cpu))
             .arg(format!("-lc{}", cpu));
 
@@ -98,7 +97,7 @@ impl<'a> Compiler<'a> {
         }
 
         // Step 3: Run binman if available for 8-bit targets
-        let binman = fuzix_root.join("tools").join("binman85");
+        let binman = runtime.join("tools").join("binman85");
         fs::copy(&b1_file, &final_out)?;
 
         if (cpu == "8080" || cpu == "8085" || cpu == "z80") && binman.exists() {

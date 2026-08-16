@@ -38,8 +38,8 @@ impl<'a> DiskManager<'a> {
         }
 
         let runtime = self.toolchain.runtime_dir();
-        let src_boot = runtime.join("fuzix").join("images").join("boot.dsk");
-        let src_hd = runtime.join("fuzix").join("images").join("hd-fuzix.dsk");
+        let src_boot = runtime.join("images").join("boot.dsk");
+        let src_hd = runtime.join("images").join("hd-fuzix.dsk");
 
         if !boot.exists() && src_boot.exists() {
             fs::copy(&src_boot, &boot)?;

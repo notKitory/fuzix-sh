@@ -157,55 +157,55 @@ jobs:
           arch="${{ matrix.arch }}"
 
           rm -rf "$pkg" "$dist"
-          mkdir -p "$pkg/toolchain/opt-fcc" \
-            "$pkg/fuzix/fuzix/include" \
-            "$pkg/fuzix/fuzix/libs" \
-            "$pkg/fuzix/fuzix/tools" \
-            "$pkg/fuzix/fuzix/images" \
-            "$pkg/z80pack/z80pack/cpmsim/srctools" \
-            "$pkg/z80pack/z80pack/cpmsim/conf" \
-            "$pkg/z80pack/z80pack/cpmsim/disks" \
-            "$pkg/emulatorkit/emulatorkit" \
+          mkdir -p "$pkg/toolchain" \
+            "$pkg/fuzix/include" \
+            "$pkg/fuzix/libs" \
+            "$pkg/fuzix/tools" \
+            "$pkg/fuzix/images" \
+            "$pkg/z80pack/srctools" \
+            "$pkg/z80pack/conf" \
+            "$pkg/z80pack/disks" \
+            "$pkg/emulatorkit" \
             "$dist"
 
-          cp -a /opt/fcc/. "$pkg/toolchain/opt-fcc/"
-          cp -a "$root/src/FUZIX/Library/include/." "$pkg/fuzix/fuzix/include/"
-          cp "$root/src/FUZIX/Library/libs"/*.a "$pkg/fuzix/fuzix/libs/"
-          cp "$root/src/FUZIX/Library/libs"/*.o "$pkg/fuzix/fuzix/libs/"
-          cp "$root/src/FUZIX/Library/tools/binman85" "$pkg/fuzix/fuzix/tools/binman85"
-          cp "$root/src/FUZIX/Standalone/ucp" "$pkg/fuzix/fuzix/ucp"
-          cp "$root/downloads/z80pack/boot.dsk" "$pkg/fuzix/fuzix/images/boot.dsk"
-          cp "$root/downloads/z80pack/hd-fuzix.dsk" "$pkg/fuzix/fuzix/images/hd-fuzix.dsk"
+          cp -a /opt/fcc/. "$pkg/toolchain/"
+          cp -a "$root/src/FUZIX/Library/include/." "$pkg/fuzix/include/"
+          cp "$root/src/FUZIX/Library/libs"/*.a "$pkg/fuzix/libs/"
+          cp "$root/src/FUZIX/Library/libs"/*.o "$pkg/fuzix/libs/"
+          cp "$root/src/FUZIX/Library/tools/binman85" "$pkg/fuzix/tools/binman85"
+          cp "$root/src/FUZIX/Standalone/ucp" "$pkg/fuzix/ucp"
+          cp "$root/downloads/z80pack/boot.dsk" "$pkg/fuzix/images/boot.dsk"
+          cp "$root/downloads/z80pack/hd-fuzix.dsk" "$pkg/fuzix/images/hd-fuzix.dsk"
 
-          cp "$root/src/z80pack/cpmsim/cpmsim" "$pkg/z80pack/z80pack/cpmsim/cpmsim"
-          cp -a "$root/src/z80pack/cpmsim/conf/." "$pkg/z80pack/z80pack/cpmsim/conf/"
+          cp "$root/src/z80pack/cpmsim/cpmsim" "$pkg/z80pack/cpmsim"
+          cp -a "$root/src/z80pack/cpmsim/conf/." "$pkg/z80pack/conf/"
           for tool in cpmrecv cpmsend ptp2bin mkdskimg bin2hex cpmr.sh cpmw.sh; do
             if [ -x "$root/src/z80pack/cpmsim/srctools/$tool" ]; then
-              cp "$root/src/z80pack/cpmsim/srctools/$tool" "$pkg/z80pack/z80pack/cpmsim/srctools/"
+              cp "$root/src/z80pack/cpmsim/srctools/$tool" "$pkg/z80pack/srctools/"
             fi
           done
 
           if [ -x "$root/src/Virtual68/v68" ]; then
-            cp "$root/src/Virtual68/v68" "$pkg/emulatorkit/emulatorkit/v68"
+            cp "$root/src/Virtual68/v68" "$pkg/emulatorkit/v68"
           fi
           if [ -x "$root/src/EmulatorKit/tiny68k" ]; then
-            cp "$root/src/EmulatorKit/tiny68k" "$pkg/emulatorkit/emulatorkit/tiny68k"
+            cp "$root/src/EmulatorKit/tiny68k" "$pkg/emulatorkit/tiny68k"
           fi
 
-          test -x "$pkg/toolchain/opt-fcc/bin/fcc"
-          test -x "$pkg/toolchain/opt-fcc/bin/asz80"
-          test -x "$pkg/toolchain/opt-fcc/bin/ldz80"
-          test -f "$pkg/fuzix/fuzix/include/stdio.h"
-          test -d "$pkg/fuzix/fuzix/include/8080"
-          test -f "$pkg/fuzix/fuzix/libs/crt0_8080.o"
-          test -f "$pkg/fuzix/fuzix/libs/libc8080.a"
-          test -x "$pkg/fuzix/fuzix/tools/binman85"
-          test -x "$pkg/fuzix/fuzix/ucp"
-          test -s "$pkg/fuzix/fuzix/images/boot.dsk"
-          test -s "$pkg/fuzix/fuzix/images/hd-fuzix.dsk"
-          test -x "$pkg/z80pack/z80pack/cpmsim/cpmsim"
-          test -d "$pkg/z80pack/z80pack/cpmsim/srctools"
-          test -x "$pkg/emulatorkit/emulatorkit/v68"
+          test -x "$pkg/toolchain/bin/fcc"
+          test -x "$pkg/toolchain/bin/asz80"
+          test -x "$pkg/toolchain/bin/ldz80"
+          test -f "$pkg/fuzix/include/stdio.h"
+          test -d "$pkg/fuzix/include/8080"
+          test -f "$pkg/fuzix/libs/crt0_8080.o"
+          test -f "$pkg/fuzix/libs/libc8080.a"
+          test -x "$pkg/fuzix/tools/binman85"
+          test -x "$pkg/fuzix/ucp"
+          test -s "$pkg/fuzix/images/boot.dsk"
+          test -s "$pkg/fuzix/images/hd-fuzix.dsk"
+          test -x "$pkg/z80pack/cpmsim"
+          test -d "$pkg/z80pack/srctools"
+          test -x "$pkg/emulatorkit/v68"
 
           tar -C "$pkg/toolchain" -czf "$dist/fuzix-toolchain-$arch.tar.gz" .
           tar -C "$pkg/fuzix" -czf "$dist/fuzix-runtime-$arch.tar.gz" .
